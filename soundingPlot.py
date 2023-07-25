@@ -147,14 +147,14 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
         soundingDS.attrs["inLCL"] = np.nan * units.hPa
         soundingDS.attrs["inLFC"] = np.nan * units.hPa
         soundingDS.attrs["inEL"] = np.nan * units.hPa
-        soundingDS.attrs["inCAPE"], soundingDS.attrs["inCINH"] = np.nan * units("J/kg"), np.nan * units("J/kg")
+        soundingDS.attrs["inCAPE"], soundingDS.attrs["inCINH"] = np.nan * units.joule/units.kilogram, np.nan * units.joule/units.kilogram
     soundingDS["inParcelPath"] = inflowParcelPath
     # Cloud Layer heights
     soundingDS.attrs["cloudLayerBottom"] = soundingDS.attrs[selectedParcel+"LCL"]
     soundingDS.attrs["cloudLayerTop"] = soundingDS.attrs[selectedParcel+"EL"]
 
     # pwat
-    soundingDS.attrs["pwat"] = mpcalc.precipitable_water(soundingDS.LEVEL, soundingDS.DWPT).to("inches")
+    soundingDS.attrs["pwat"] = mpcalc.precipitable_water(soundingDS.LEVEL, soundingDS.DWPT).to(units.inch)
     # storm motion
     soundingDS.attrs["bunkers_RM"], soundingDS.attrs["bunkers_LM"], soundingDS.attrs["zeroToSixMean"] = mpcalc.bunkers_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
     soundingDS.attrs["corfidi_up"], soundingDS.attrs["corfidi_down"] = mpcalc.corfidi_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
@@ -185,15 +185,15 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
         soundingDS.attrs["favored_motion"] = "LM"
 
     # Other assorted params needed for SHARPpy's hazard type decision tree
-    soundingDS.attrs["sfc_to_one_LR"] = -((soundingDS.TEMP.data[0] - soundingDS.where(soundingDS.AGL <= 1000 * units.meter, drop=True).TEMP.data[-1])/(soundingDS.AGL.data[0] - soundingDS.where(soundingDS.AGL <= 1000 * units.meter, drop=True).AGL.data[-1]).to("kilometer"))
-    soundingDS.attrs["five_to_seven_LR"] = -((soundingDS.where(soundingDS.LEVEL >= 500 * units.hPa, drop=True).TEMP.data[-1] - soundingDS.where(soundingDS.LEVEL >= 700 * units.hPa, drop=True).TEMP.data[-1])/(soundingDS.where(soundingDS.LEVEL >= 500 * units.hPa, drop=True).HGHT.data[-1] - soundingDS.where(soundingDS.LEVEL >= 700 * units.hPa, drop=True).HGHT.data[-1]).to("kilometer"))
+    soundingDS.attrs["sfc_to_one_LR"] = -((soundingDS.TEMP.data[0] - soundingDS.where(soundingDS.AGL <= 1000 * units.meter, drop=True).TEMP.data[-1])/(soundingDS.AGL.data[0] - soundingDS.where(soundingDS.AGL <= 1000 * units.meter, drop=True).AGL.data[-1]).to(units.km))
+    soundingDS.attrs["five_to_seven_LR"] = -((soundingDS.where(soundingDS.LEVEL >= 500 * units.hPa, drop=True).TEMP.data[-1] - soundingDS.where(soundingDS.LEVEL >= 700 * units.hPa, drop=True).TEMP.data[-1])/(soundingDS.where(soundingDS.LEVEL >= 500 * units.hPa, drop=True).HGHT.data[-1] - soundingDS.where(soundingDS.LEVEL >= 700 * units.hPa, drop=True).HGHT.data[-1]).to(units.km))
     soundingDS.attrs["freezing_level_agl"] = soundingDS.where(soundingDS.TEMP <= 0 * units.degC, drop=True).AGL.data[0]
     soundingDS.attrs["favored1kmSRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=1000*units.meter, storm_u=soundingDS.attrs["bunkers_"+soundingDS.favored_motion][0], storm_v=soundingDS.attrs["bunkers_"+soundingDS.favored_motion][1])[2]
     soundingDS.attrs["fixed_stp"] = mpcalc.significant_tornado(soundingDS.sbCAPE, soundingDS.sbLCL_agl, soundingDS.favored1kmSRH, mpcalc.wind_speed(*soundingDS.sfc_to_six_shear)).to_base_units().magnitude[0]
     cinTerm = 1
-    if soundingDS.mlCINH > -50 * units("J/kg"):
+    if soundingDS.mlCINH > -50 * units.joule/units.kilogram:
         cinTerm = 1
-    elif soundingDS.mlCINH < -200 * units("J/kg"):
+    elif soundingDS.mlCINH < -200 * units.joule/units.kilogram:
         cinTerm = 0
     else:
         cinTerm = ((soundingDS.mlCINH.magnitude + 200.) / 150.)
@@ -230,9 +230,9 @@ def plotParams(profileData, ax):
     ax.text(0.5, 0.44, f"TT:\n{profileData.totaltotals.magnitude:.1f}", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
     ax.text(0.99, 0.44, f"ConvT:\n{int(profileData.convT.to(units.degF).magnitude)}°F", ha="right", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
     
-    TorLR = -((profileData.TEMP.data[0] - profileData.where(profileData.AGL <= 500 * units.meter, drop=True).TEMP.data[-1])/(profileData.AGL.data[0] - profileData.where(profileData.AGL <= 500 * units.meter, drop=True).AGL.data[-1]).to("kilometer"))
-    LLLR = -((profileData.TEMP.data[0] - profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).TEMP.data[-1])/(profileData.AGL.data[0] - profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).AGL.data[-1]).to("kilometer"))
-    MLLR = -((profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).TEMP.data[-1] - profileData.where(profileData.AGL <= 6000 * units.meter, drop=True).TEMP.data[-1])/(profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).AGL.data[-1] - profileData.where(profileData.AGL <= 6000 * units.meter, drop=True).AGL.data[-1]).to("kilometer"))
+    TorLR = -((profileData.TEMP.data[0] - profileData.where(profileData.AGL <= 500 * units.meter, drop=True).TEMP.data[-1])/(profileData.AGL.data[0] - profileData.where(profileData.AGL <= 500 * units.meter, drop=True).AGL.data[-1]).to(units.km))
+    LLLR = -((profileData.TEMP.data[0] - profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).TEMP.data[-1])/(profileData.AGL.data[0] - profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).AGL.data[-1]).to(units.km))
+    MLLR = -((profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).TEMP.data[-1] - profileData.where(profileData.AGL <= 6000 * units.meter, drop=True).TEMP.data[-1])/(profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).AGL.data[-1] - profileData.where(profileData.AGL <= 6000 * units.meter, drop=True).AGL.data[-1]).to(units.km))
     ax.text(0.5, 0.2, "Lapse Rates (°C/km):", ha="center", va="center", transform=ax.transAxes, clip_on=False, zorder=5)
     ax.text(0, 0.01, f"0->.5km\n{TorLR.magnitude:.1f}", ha="left", va="bottom", transform=ax.transAxes, clip_on=False, zorder=5)
     ax.text(0.5, 0.01, f"0->3km\n{LLLR.magnitude:.1f}", ha="center", va="bottom", transform=ax.transAxes, clip_on=False, zorder=5)
@@ -254,7 +254,7 @@ def plotThermoynamics(profileData, ax, parcelType="sb"):
         try:
             ecape = calc_ecape(profileData.HGHT.data, profileData.LEVEL.data, profileData.TEMP.data, mpcalc.specific_humidity_from_dewpoint(profileData.LEVEL.data, profileData.DWPT.data), profileData.u.data, profileData.v.data, cape_type=caption.lower().replace(" ", "_"))
         except IndexError:
-            ecape = 0 * units("J/kg")
+            ecape = 0 * units.joule/units.kilogram
         lvlBelow3 = profileData.where(profileData.AGL <= 3000*units.meter, drop=True).LEVEL.data
         tempBelow3 = profileData.where(profileData.AGL <= 3000*units.meter, drop=True).TEMP.data
         dwptBelow3 = profileData.where(profileData.AGL <= 3000*units.meter, drop=True).DWPT.data
@@ -300,7 +300,7 @@ def plotThermoynamics(profileData, ax, parcelType="sb"):
         try:
             ecape = calc_ecape(profileData.HGHT.data, profileData.LEVEL.data, profileData.TEMP.data, mpcalc.specific_humidity_from_dewpoint(profileData.LEVEL.data, profileData.DWPT.data), profileData.u.data, profileData.v.data, undiluted_cape=profileData.mlCAPE)
         except:
-            ecape = 0 * units("J/kg")
+            ecape = 0 * units.joule/units.kilogram
         cape3km = cape_func(profileData.where(profileData.AGL <= 3000*units.meter, drop=True).LEVEL, profileData.where(profileData.AGL <= 3000*units.meter, drop=True).TEMP, profileData.where(profileData.AGL <= 3000*units.meter, drop=True).DWPT, bottom=profileData.inflowBottom, depth=(profileData.inflowBottom - profileData.inflowTop))[0]
         capeType = "in"
         if not np.isnan(profileData.attrs[capeType+'CAPE']):
@@ -699,7 +699,7 @@ def plotPsblHazType(profileData, ax, precipType):
         shearms = 27
     elif shearms < 7:
         shearms = 7.
-    mostUnstableMixingRatio = mpcalc.mixing_ratio_from_relative_humidity(profileData.mu_initPressure, profileData.mu_initTemp, mpcalc.relative_humidity_from_dewpoint(profileData.mu_initTemp, profileData.mu_initDewpoint)).to("g/kg").magnitude
+    mostUnstableMixingRatio = mpcalc.mixing_ratio_from_relative_humidity(profileData.mu_initPressure, profileData.mu_initTemp, mpcalc.relative_humidity_from_dewpoint(profileData.mu_initTemp, profileData.mu_initDewpoint)).to(units.gram/units.kilogram).magnitude
     if mostUnstableMixingRatio > 13.6:
         mostUnstableMixingRatio = 13.6
     elif mostUnstableMixingRatio < 11:
@@ -708,10 +708,10 @@ def plotPsblHazType(profileData, ax, precipType):
     if tempAt500 > -5.5 * units.degC:
         tempAt500 = -5.5 * units.degC
     ship = -1 * profileData.muCAPE * mostUnstableMixingRatio * profileData.five_to_seven_LR * tempAt500 * shearms / 42000000
-    if profileData.muCAPE < 1300 * units("J/kg"):
-        ship = ship*(profileData.muCAPE.to("J/kg").magnitude/1300.)
-    if profileData.five_to_seven_LR < 5.8 * units("delta_degree_Celsius / km"):
-        ship = ship*(profileData.five_to_seven_LR.to("delta_degree_Celsius / km").magnitude/5.8)
+    if profileData.muCAPE < 1300 * units.joule/units.kilogram:
+        ship = ship*(profileData.muCAPE.to(units.joule/units.kilogram).magnitude/1300.)
+    if profileData.five_to_seven_LR < 5.8 * units.delta_degree_Celsius/units.km:
+        ship = ship*(profileData.five_to_seven_LR.to(units.delta_degree_Celsius/units.km).magnitude/5.8)
     if profileData.freezing_level_agl < 2400 * units.meter:
         ship = ship * (profileData.freezingLevel/2400.)
     ship = ship.magnitude
@@ -723,28 +723,28 @@ def plotPsblHazType(profileData, ax, precipType):
     fourToSixSRWu, fourToSixSRWv = (fourToSixMW[0]-favored[0]), (fourToSixMW[1]-favored[1])
     fourToSixSRW = mpcalc.wind_speed(fourToSixSRWu, fourToSixSRWv)
     bulkShear8 = mpcalc.wind_speed(*profileData.sfc_to_eight_shear)
-    if profileData.effective_stp >= 3 and profileData.fixed_stp >= 3 and profileData.favored1kmSRH >= 200 * units.meter**2 / units.second**2 and profileData.attrs[profileData.favored_motion+"_SRH"] >= 200 * units.meter**2 / units.second**2 and fourToSixSRW >= 15*units.kt and bulkShear8 > 45 * units.kt and profileData.sbLCL_agl < 1000 * units.meter and profileData.mlLCL_agl < 1200 * units.meter and profileData.sfc_to_one_LR >= 5 *units("delta_degree_Celsius/km") and profileData.mlCINH > -50*units("J/kg") and profileData.sbCAPE.to("J/kg").magnitude == profileData.muCAPE.to("J/kg").magnitude:
+    if profileData.effective_stp >= 3 and profileData.fixed_stp >= 3 and profileData.favored1kmSRH >= 200 * units.meter**2 / units.second**2 and profileData.attrs[profileData.favored_motion+"_SRH"] >= 200 * units.meter**2 / units.second**2 and fourToSixSRW >= 15*units.kt and bulkShear8 > 45 * units.kt and profileData.sbLCL_agl < 1000 * units.meter and profileData.mlLCL_agl < 1200 * units.meter and profileData.sfc_to_one_LR >= 5 *units.delta_degree_Celsius/units.km and profileData.mlCINH > -50*units.joule/units.kilogram and profileData.sbCAPE.to(units.joule/units.kilogram).magnitude == profileData.muCAPE.to(units.joule/units.kilogram).magnitude:
         ax.text(0.5, 0.9, "Possible\nHazard Type:\nPDS TOR", color="magenta", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
         return
     if profileData.effective_stp >= 3 or profileData.fixed_stp >= 4:
-        if profileData.mlCINH >= -125 * units("J/kg"):
-            if profileData.sbCAPE.to("J/kg").magnitude == profileData.muCAPE.to("J/kg").magnitude:
+        if profileData.mlCINH >= -125 * units.joule/units.kilogram:
+            if profileData.sbCAPE.to(units.joule/units.kilogram).magnitude == profileData.muCAPE.to(units.joule/units.kilogram).magnitude:
                 ax.text(0.5, 0.9, "Possible\nHazard Type:\nTOR", color="red", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
                 return
     if profileData.effective_stp >= 1 or profileData.fixed_stp >= 1:
         if fourToSixSRW >= 15 * units.kt or bulkShear8 > 40 * units.kt:
-            if profileData.mlCINH >= -50 * units("J/kg") and profileData.sbCAPE.to("J/kg").magnitude == profileData.muCAPE.to("J/kg").magnitude:
+            if profileData.mlCINH >= -50 * units.joule/units.kilogram and profileData.sbCAPE.to(units.joule/units.kilogram).magnitude == profileData.muCAPE.to(units.joule/units.kilogram).magnitude:
                 ax.text(0.5, 0.9, "Possible\nHazard Type:\nTOR", color="red", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
                 return
     if profileData.effective_stp >= 1 or profileData.fixed_stp >= 1:
-        if np.mean([profileData.LL_RH.magnitude, profileData.ML_RH.magnitude]) >= 0.6 and profileData.sfc_to_one_LR >= 5*units("delta_degree_Celsius/km") and profileData.mlCINH > -50*units("J/kg") and profileData.sbCAPE.to("J/kg").magnitude == profileData.muCAPE.to("J/kg").magnitude:
+        if np.mean([profileData.LL_RH.magnitude, profileData.ML_RH.magnitude]) >= 0.6 and profileData.sfc_to_one_LR >= 5*units.delta_degree_Celsius/units.km and profileData.mlCINH > -50*units.joule/units.kilogram and profileData.sbCAPE.to(units.joule/units.kilogram).magnitude == profileData.muCAPE.to(units.joule/units.kilogram).magnitude:
             ax.text(0.5, 0.9, "Possible\nHazard Type:\nTOR", color="red", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
             return
     if profileData.effective_stp >= 1 or profileData.fixed_stp >= 1:
-        if profileData.mlCINH > -150 * units("J/kg") and profileData.sbCAPE.to("J/kg").magnitude == profileData.muCAPE.to("J/kg").magnitude:
+        if profileData.mlCINH > -150 * units.joule/units.kilogram and profileData.sbCAPE.to(units.joule/units.kilogram).magnitude == profileData.muCAPE.to(units.joule/units.kilogram).magnitude:
             ax.text(0.5, 0.9, "Possible\nHazard Type:\nMRGL TOR", color="red", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
             return
-    if profileData.mlCINH > -50 *units("J/kg") and profileData.muCAPE == profileData.sbCAPE:
+    if profileData.mlCINH > -50 *units.joule/units.kilogram and profileData.muCAPE == profileData.sbCAPE:
         if profileData.effective_stp >= 1 and profileData.attrs[profileData.favored_motion+"_SRH"] >= 150 * units.meter**2 / units.second**2:
             ax.text(0.5, 0.9, "Possible\nHazard Type:\nMRGL TOR", color="red", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
             return
@@ -752,25 +752,25 @@ def plotPsblHazType(profileData, ax, precipType):
             ax.text(0.5, 0.9, "Possible\nHazard Type:\nMRGL TOR", color="red", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
             return
     if profileData.fixed_stp >= 1 or profileData.scp >= 4 or profileData.effective_stp >= 1:
-        if profileData.muCINH > -50 * units("J/kg"):
+        if profileData.muCINH > -50 * units.joule/units.kilogram:
             ax.text(0.5, 0.9, "Possible\nHazard Type:\nSVR", color="goldenrod", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
             return
-    if profileData.muCINH > -50 *units("J/kg"):
+    if profileData.muCINH > -50 *units.joule/units.kilogram:
         if ship >=1 and profileData.scp >= 2:
             ax.text(0.5, 0.9, "Possible\nHazard Type:\nSVR", color="goldenrod", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
             return
     
-    if (profileData.scp >= 2 and ship >= 1) or profileData.dcape >= 750 * units("J/kg") and profileData.muCINH >= 50 * units("J/kg"):
+    if (profileData.scp >= 2 and ship >= 1) or profileData.dcape >= 750 * units.joule/units.kilogram and profileData.muCINH >= 50 * units.joule/units.kilogram:
         ax.text(0.5, 0.9, "Possible\nHazard Type:\nSVR", color="goldenrod", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
         return
-    if profileData.muCINH > -75 * units("J/kg"):
+    if profileData.muCINH > -75 * units.joule/units.kilogram:
         if ship >= 0.5 or profileData.scp >= 0.5:
             ax.text(0.5, 0.9, "Possible\nHazard Type:\nMRGL SVR", color="dodgerblue", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
             return
-    if profileData.pwat >= 2 * units("in") and mpcalc.wind_speed(*profileData.corfidi_upshear) <= 25 * units("kt"):
+    if profileData.pwat >= 2 * units.inch and mpcalc.wind_speed(*profileData.corfidi_upshear) <= 25 * units.kt:
         ax.text(0.5, 0.9, "Possible\nHazard Type:\nFLASH FLOOD", color="forestgreen", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
         return
-    if mpcalc.wind_speed(profileData.u.data[0], profileData.v.data[0]) > 35 * units("mph") and "SNOW" in precipType:
+    if mpcalc.wind_speed(profileData.u.data[0], profileData.v.data[0]) > 35 * units.mile/units.hour and "SNOW" in precipType:
         ax.text(0.5, 0.9, "Possible\nHazard Type:\nBLIZZARD", color="darkblue", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
         return
     if mpcalc.apparent_temperature(profileData.TEMP.data[0], mpcalc.relative_humidity_from_dewpoint(profileData.TEMP.data[0], profileData.DWPT.data[0]), mpcalc.wind_speed(profileData.u.data[0], profileData.v.data[0]), mask_undefined=False) > 105 * units.degF:
@@ -856,18 +856,18 @@ def plotHodograph(profileData, ax):
 
 def plotThermalWind(profileData, ax, latitude):
     if latitude is not None:
-        uflip = np.flip(profileData.u.data).to(units.meter/units.sec)
-        vflip = np.flip(profileData.v.data).to(units.meter/units.sec)
+        uflip = np.flip(profileData.u.data)
+        vflip = np.flip(profileData.v.data)
         pflip = np.flip(profileData.LEVEL.data)
         dvdP = np.flip(mpcalc.first_derivative(vflip, x=pflip))
         dudP = np.flip(mpcalc.first_derivative(uflip, x=pflip))
 
-        f = mpcalc.coriolis_parameter(latitude * units.deg)
+        f = mpcalc.coriolis_parameter(latitude)
         R = constants.dry_air_gas_constant.to_base_units()
         
         dTdx = - (f/R) * (profileData.LEVEL.data)* dvdP
         dTdy = (f/R) * (profileData.LEVEL.data) * dudP
-        dTdt = (- profileData.u.data.to(units.meter/units.sec) * dTdx - profileData.v.data.to(units.meter/units.sec) * dTdy).to(units.kelvin / units.hour)
+        dTdt = (- profileData.u.data * dTdx - profileData.v.data * dTdy).to(units.kelvin / units.hour)
         ax.fill_betweenx(profileData.LEVEL.data.to(units.hPa), dTdt, 0, where=dTdt > 0, color="red", alpha=0.5, zorder=2)
         ax.fill_betweenx(profileData.LEVEL.data.to(units.hPa), dTdt, 0, where=dTdt < 0, color="blue", alpha=0.5, zorder=2)
 
@@ -926,13 +926,13 @@ def plotThermalWind(profileData, ax, latitude):
 
 def plotSkewT(profileData, skew, parcelType="sb"):
     # Plot data
-    skew.plot(profileData.LEVEL, profileData.TEMP.data.to("degC"), "red", zorder=4)
-    skew.plot(profileData.LEVEL, profileData.DWPT.data.to("degC"), "lime", zorder=5)
-    skew.plot(profileData.LEVEL, profileData.virtT.data.to("degC"), "red", linestyle=":", zorder=4)
-    skew.plot(profileData.LEVEL, profileData.wetbulb.data.to("degC"), "cyan", linewidth=0.5, zorder=3)
+    skew.plot(profileData.LEVEL, profileData.TEMP.data.to(units.degC), "red", zorder=4)
+    skew.plot(profileData.LEVEL, profileData.DWPT.data.to(units.degC), "lime", zorder=5)
+    skew.plot(profileData.LEVEL, profileData.virtT.data.to(units.degC), "red", linestyle=":", zorder=4)
+    skew.plot(profileData.LEVEL, profileData.wetbulb.data.to(units.degC), "cyan", linewidth=0.5, zorder=3)
     mask = mpcalc.resample_nn_1d(profileData.LEVEL.data.to(units.hPa).magnitude,  np.logspace(4, 2))
     skew.plot_barbs(profileData.LEVEL.data[mask], profileData.u.data.to(units.kt)[mask], profileData.v.data.to(units.kt)[mask])
-    skew.ax.set_xlim(10*(np.nanmin(profileData.TEMP.data.to("degC").magnitude) // 10)+10, (10*np.nanmax(profileData.TEMP.data.to("degC").magnitude) // 10)+10)
+    skew.ax.set_xlim(10*(np.nanmin(profileData.TEMP.data.to(units.degC).magnitude) // 10)+10, (10*np.nanmax(profileData.TEMP.data.to(units.degC).magnitude) // 10)+10)
     skew.ax.set_xlabel("Temperature (°C)")
     skew.ax.set_ylabel("Pressure (hPa)")
     skew.ax.set_ylim(np.nanmax(profileData.LEVEL.data.magnitude)+5, 100)
