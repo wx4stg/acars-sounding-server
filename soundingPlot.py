@@ -208,6 +208,10 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
         soundingDS.attrs["scp"] = mpcalc.supercell_composite(soundingDS.muCAPE, favoredEILSRH, shearMag)[0]
     else:
         soundingDS.attrs["scp"] = 0 * units.dimensionless
+    soundingDS.attrs["k"] = mpcalc.k_index(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+    soundingDS.attrs["totaltotals"] = mpcalc.total_totals_index(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+    soundingDS.attrs["sweat"] = mpcalc.sweat_index(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT, soundingDS.WSPD, soundingDS.WDIR)[0]
+    _, _, soundingDS.attrs["convT"] = mpcalc.ccl(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
 
     # DCAPE
     soundingDS.attrs["dcape"], soundingDS["dcape_levels"], soundingDS.attrs["dcape_profile"]  = mpcalc.down_cape(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
@@ -216,12 +220,27 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     
 
 def plotParams(profileData, ax):
-    ax.text(0.5, 0.79, f"PWAT:\n{profileData.pwat.to('in').magnitude:.2f} in", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
-    ax.text(0.5, 0.59, f"SCP: {profileData.scp.magnitude:.1f}", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
-    ax.text(0.5, 0.49, f"DCAPE:\n{int(profileData.dcape.to('J/kg').magnitude)} J/kg", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    ax.text(0.01, 0.79, f"SWEAT:\n{profileData.sweat.magnitude:.1f}", ha="left", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    ax.text(0.4, 0.79, f"SCP:\n{profileData.scp.magnitude:.1f}", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    ax.text(0.65, 0.79, f"K:\n{profileData.k.magnitude:.1f}", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    ax.text(0.99, 0.79, f"eSTP:\n{profileData.effective_stp:.1f}", ha="right", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    downMax = (2*profileData.dcape.to('J/kg').magnitude)**0.5
+    ax.text(0.5, 0.6, f"DCAPE:\n{int(profileData.dcape.to('J/kg').magnitude)} J/kg, {downMax:.1f} m/s, {int(profileData.dcape_profile[0].to(units.degF).magnitude)}F", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    ax.text(0, 0.44, f"PWAT:\n{profileData.pwat.to('in').magnitude:.2f} in", ha="left", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    ax.text(0.5, 0.44, f"TT:\n{profileData.totaltotals.magnitude:.1f}", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    ax.text(0.99, 0.44, f"ConvT:\n{int(profileData.convT.to(units.degF).magnitude)}°F", ha="right", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    
+    TorLR = -((profileData.TEMP.data[0] - profileData.where(profileData.AGL <= 500 * units.meter, drop=True).TEMP.data[-1])/(profileData.AGL.data[0] - profileData.where(profileData.AGL <= 500 * units.meter, drop=True).AGL.data[-1]).to("kilometer"))
+    LLLR = -((profileData.TEMP.data[0] - profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).TEMP.data[-1])/(profileData.AGL.data[0] - profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).AGL.data[-1]).to("kilometer"))
+    MLLR = -((profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).TEMP.data[-1] - profileData.where(profileData.AGL <= 6000 * units.meter, drop=True).TEMP.data[-1])/(profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).AGL.data[-1] - profileData.where(profileData.AGL <= 6000 * units.meter, drop=True).AGL.data[-1]).to("kilometer"))
+    ax.text(0.5, 0.2, "Lapse Rates (°C/km):", ha="center", va="center", transform=ax.transAxes, clip_on=False, zorder=5)
+    ax.text(0, 0.01, f"0->.5km\n{TorLR.magnitude:.1f}", ha="left", va="bottom", transform=ax.transAxes, clip_on=False, zorder=5)
+    ax.text(0.5, 0.01, f"0->3km\n{LLLR.magnitude:.1f}", ha="center", va="bottom", transform=ax.transAxes, clip_on=False, zorder=5)
+    ax.text(0.99, 0.01, f"3->6km\n{MLLR.magnitude:.1f}", ha="right", va="bottom", transform=ax.transAxes, clip_on=False, zorder=5)
+
 
 def plotThermoynamics(profileData, ax, parcelType="sb"):
-    thermodynamicsTableContent = [["Parcel", "CAPE", "CINH", "ECAPE", "LCL", "LFC", "EL", "0->3km CAPE"]]
+    thermodynamicsTableContent = [["Parcel", "CAPE", "CINH", "ECAPE", "LCL", "LFC", "EL", "0->3km\nCAPE"]]
 
     variables = [
         ("Surface Based", mpcalc.surface_based_cape_cin),
@@ -242,17 +261,19 @@ def plotThermoynamics(profileData, ax, parcelType="sb"):
         cape3km = cape_func(lvlBelow3, tempBelow3, dwptBelow3)[0]
 
         if not np.isnan(profileData.attrs[capeType+'CAPE']):
-            capeLbl = f"{int(profileData.attrs[capeType+'CAPE'].to('J/kg').magnitude)} J/kg"
+            wmax = (2*profileData.attrs[capeType+'CAPE'].to('J/kg').magnitude)**0.5
+            capeLbl = f"{int(profileData.attrs[capeType+'CAPE'].to('J/kg').magnitude)} J/kg\n{wmax:.1f} m/s"
         else:
-            capeLbl = "0 J/kg"
+            capeLbl = "0 J/kg\n0 m/s"
         if not np.isnan(profileData.attrs[capeType+'CINH']):
             cinhLbl = f"{int(profileData.attrs[capeType+'CINH'].to('J/kg').magnitude)} J/kg"
         else:
             cinhLbl = "0 J/kg"
         if not np.isnan(ecape):
-            ecapeLbl = f"{int(ecape.to('J/kg').magnitude)} J/kg"
+            wmax = (2*ecape.to('J/kg').magnitude)**0.5
+            ecapeLbl = f"{int(ecape.to('J/kg').magnitude)} J/kg\n{wmax:.1f} m/s"
         else:
-            ecapeLbl = "0 J/kg"
+            ecapeLbl = "0 J/kg\n0 m/s"
         if not np.isnan(profileData.attrs[capeType+'LCL_agl']):
             lclLbl = f"{int(profileData.attrs[capeType+'LCL_agl'].to(units.meter).magnitude)} m\n{int(profileData.attrs[capeType+'LCL'].to(units.hPa).magnitude)} hPa"
         else:
@@ -283,17 +304,19 @@ def plotThermoynamics(profileData, ax, parcelType="sb"):
         cape3km = cape_func(profileData.where(profileData.AGL <= 3000*units.meter, drop=True).LEVEL, profileData.where(profileData.AGL <= 3000*units.meter, drop=True).TEMP, profileData.where(profileData.AGL <= 3000*units.meter, drop=True).DWPT, bottom=profileData.inflowBottom, depth=(profileData.inflowBottom - profileData.inflowTop))[0]
         capeType = "in"
         if not np.isnan(profileData.attrs[capeType+'CAPE']):
-            capeLbl = f"{int(profileData.attrs[capeType+'CAPE'].to('J/kg').magnitude)} J/kg"
+            vmax = (2*profileData.attrs[capeType+'CAPE'].to('J/kg').magnitude)**0.5
+            capeLbl = f"{int(profileData.attrs[capeType+'CAPE'].to('J/kg').magnitude)} J/kg\n{vmax:.1f} m/s"
         else:
-            capeLbl = "0 J/kg"
+            capeLbl = "0 J/kg\n0 m/s"
         if not np.isnan(profileData.attrs[capeType+'CINH']):
             cinhLbl = f"{int(profileData.attrs[capeType+'CINH'].to('J/kg').magnitude)} J/kg"
         else:
             cinhLbl = "0 J/kg"
         if not np.isnan(ecape):
-            ecapeLbl = f"{int(ecape.to('J/kg').magnitude)} J/kg"
+            wmax = (2*ecape.to('J/kg').magnitude)**0.5
+            ecapeLbl = f"{int(ecape.to('J/kg').magnitude)} J/kg\n{wmax:.1f} m/s"
         else:
-            ecapeLbl = "0 J/kg"
+            ecapeLbl = "0 J/kg\n0 m/s"
         if not np.isnan(profileData.attrs[capeType+'LCL_agl']):
             lclLbl = f"{int(profileData.attrs[capeType+'LCL_agl'].to(units.meter).magnitude)} m\n{int(profileData.attrs[capeType+'LCL'].to(units.hPa).magnitude)} hPa"
         else:
@@ -314,6 +337,7 @@ def plotThermoynamics(profileData, ax, parcelType="sb"):
         thermodynamicsTableContent.append([caption, capeLbl, cinhLbl, ecapeLbl, lclLbl, lfcLbl, elLbl, cape3kmLbl])
 
     thermodynamicsTable = table(ax, bbox=[0, 0, 1, 0.89], cellText=thermodynamicsTableContent, cellLoc="center")
+    thermodynamicsTable.auto_set_font_size(False)
 
 
 def plotDynamics(profileData, ax):
@@ -995,7 +1019,7 @@ def plotSkewT(profileData, skew, parcelType="sb"):
 def plotSounding(profileData, outputPath, icao, time):
     fig = plt.figure()
     tax = fig.add_axes([1/20, 14/16, 18/20, 1/16])
-    if not np.isnan(profileData.LAT) and np.isnan(profileData.LON):
+    if not np.isnan(profileData.LAT) and not np.isnan(profileData.LON):
         try:
             if len(profileData.LAT) == 1:
                 groundLat = profileData.LAT
@@ -1048,12 +1072,13 @@ def plotSounding(profileData, outputPath, icao, time):
         mapAx.text(0.5, 0.5, "Location not available", ha="center", va="center", path_effects=[withStroke(linewidth=3, foreground="white")], transform=mapAx.transAxes)
     mapAx.add_feature(cfeat.COASTLINE.with_scale("50m"))
     
-    thermodynamicsAx = fig.add_axes([1/20, 1/16, 10/20, 3/16])
+    thermodynamicsAx = fig.add_axes([1/20, 1/16, 9/20, 3/16])
     thermodynamicsAx.tick_params(axis="both", which="both", bottom=False, top=False, labelbottom=False, right=False, left=False, labelleft=False)
+    thermodynamicsAx.spines[['right']].set_visible(False)
     plotThermoynamics(profileData, thermodynamicsAx)
     thermodynamicsAx.patch.set_alpha(0)
 
-    paramsAx = fig.add_axes([11/20, 1/16, 1/20, 3/16])
+    paramsAx = fig.add_axes([10/20, 1/16, 2/20, 3/16])
     paramsAx.tick_params(axis="both", which="both", bottom=False, top=False, labelbottom=False, right=False, left=False, labelleft=False)
     plotParams(profileData, paramsAx)
     paramsAx.patch.set_alpha(0)
@@ -1081,8 +1106,8 @@ def plotSounding(profileData, outputPath, icao, time):
     psblHazTypeAx.set_position([12*width_unit, 7*height_unit, 2*width_unit, 2*height_unit])
     partialThicknessAx.set_position([14*width_unit, 7*height_unit, 2*width_unit, 2*height_unit])
 
-    thermodynamicsAx.set_position([1*width_unit, 1*height_unit, 10*width_unit, 3*height_unit])
-    paramsAx.set_position([11*width_unit, 1*height_unit, width_unit, 3*height_unit])
+    thermodynamicsAx.set_position([1*width_unit, 1*height_unit, 9*width_unit, 3*height_unit])
+    paramsAx.set_position([10*width_unit, 1*height_unit, 2*width_unit, 3*height_unit])
     dynamicsAx.set_position([12*width_unit, 1*height_unit, 7*width_unit, 6*height_unit])
 
     mapAx.set_adjustable("datalim")
