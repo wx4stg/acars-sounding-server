@@ -7,7 +7,7 @@ from metpy.units import units
 import metpy.calc as mpcalc
 from metpy import plots
 from metpy import constants
-from metpy.cbook import get_test_data
+from metpy.io import add_station_lat_lon
 from ecape.calc import calc_ecape
 from matplotlib import pyplot as plt
 from matplotlib.table import table
@@ -40,51 +40,13 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
         soundingDS["LON"] = soundingDS.LON * units.degree
     elif icao is not None:
         # Get lat/lon from airport code, if provided
-        latitude, longitude = None, None
-        airports = pd.read_csv(get_test_data("airport-codes.csv"))
-        thisAirport = airports.loc[airports["ident"] == icao]
-        if len(thisAirport) == 0:
-            thisAirport = airports.loc[airports["iata_code"] == icao]
-        if len(thisAirport) == 0:
-            thisAirport = airports.loc[airports["local_code"] == icao]
-        if len(thisAirport) == 0:
-            thisAirport = airports.loc[airports["gps_code"] == icao]
-        if len(thisAirport) == 1:
-            icao = thisAirport["ident"].values[0]
-            latitude = thisAirport["latitude_deg"].values[0]  * units.degree
-            longitude = thisAirport["longitude_deg"].values[0]  * units.degree
-        else:
-            for urlToFetch in ["https://raw.githubusercontent.com/sharppy/SHARPpy/main/datasources/gfs.csv",
-                            "https://raw.githubusercontent.com/sharppy/SHARPpy/main/datasources/hrrr.csv",
-                            "https://raw.githubusercontent.com/sharppy/SHARPpy/main/datasources/hires_conus.csv",
-                            "https://raw.githubusercontent.com/sharppy/SHARPpy/main/datasources/hires-ak.csv",
-                            "https://raw.githubusercontent.com/sharppy/SHARPpy/main/datasources/nam.csv",
-                            "https://raw.githubusercontent.com/sharppy/SHARPpy/main/datasources/nam3km.csv",
-                            "https://raw.githubusercontent.com/sharppy/SHARPpy/main/datasources/rap.csv",
-                            "https://raw.githubusercontent.com/sharppy/SHARPpy/main/datasources/sharp.csv",
-                            "https://raw.githubusercontent.com/sharppy/SHARPpy/main/datasources/spc_ua.csv"
-                            "https://raw.githubusercontent.com/sharppy/SHARPpy/main/datasources/sref.csv"
-                            ]:
-                try:
-                    sharppyLocs = pd.read_csv(urlToFetch)
-                except:
-                    continue
-                thisAirport = sharppyLocs.loc[sharppyLocs["icao"] == icao]
-                if len(thisAirport) == 0:
-                    thisAirport = sharppyLocs.loc[sharppyLocs["iata"] == icao]
-                if len(thisAirport) == 1:
-                    icao = thisAirport["icao"].values[0]
-                    latitude = thisAirport["lat"].values[0] * units.degree
-                    longitude = thisAirport["lon"].values[0] * units.degree
-                    break
-        if len(thisAirport) == 0:
-            print(f"Unable to determine location of {icao}. Thermal wind and mapping are unavailable.")
-            latitude = None
-            longitude = None
+        if len(icao) == 3:
+            icao = "K"+icao.upper()
+        icaoDF = pd.DataFrame({"station" : icao}, index=[0])
+        icaoDF = add_station_lat_lon(icaoDF)
         soundingDS.attrs["icao"] = icao
-        soundingDS.attrs["LAT"] = latitude
-        soundingDS.attrs["LON"] = longitude
-
+        soundingDS.attrs["LAT"] = icaoDF["latitude"].values[0] * units.degree
+        soundingDS.attrs["LON"] = icaoDF["longitude"].values[0] * units.degree
     
     soundingDS["LEVEL_unitless"] = soundingDS.LEVEL
     startLevel = (soundingDS.LEVEL.data[0] // 1)
@@ -1033,7 +995,7 @@ def plotSkewT(profileData, skew, parcelType="sb"):
 def plotSounding(profileData, outputPath, icao, time):
     fig = plt.figure()
     tax = fig.add_axes([1/20, 14/16, 18/20, 1/16])
-    if profileData.LAT is not None and profileData.LON is not None:
+    if not np.isnan(profileData.LAT) and np.isnan(profileData.LON):
         try:
             if len(profileData.LAT) == 1:
                 groundLat = profileData.LAT
@@ -1046,6 +1008,8 @@ def plotSounding(profileData, outputPath, icao, time):
             groundLon = profileData.LON
         tax.text(0.5, 0.5, f"Observed Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao} ({groundLat.magnitude:.2f}, {groundLon.magnitude:.2f})", ha="center", va="center", transform=tax.transAxes)
     else:
+        groundLat = None
+        groundLon = None
         tax.text(0.5, 0.5, f"Observed Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao}", ha="center", va="center", transform=tax.transAxes)
     tax.axis("off")
     skew = plots.SkewT(fig, rect=[1/20, 4/16, 10/20, 10/16])
