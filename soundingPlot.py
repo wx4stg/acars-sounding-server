@@ -348,6 +348,8 @@ def plotDynamics(profileData, ax):
     lm = profileData.attrs["bunkers_LM"]
     for i in range(len(levelsToSample)):
         thisLayerRow = []
+        bottom, top = levelsToSample[i]
+        depth = top - bottom
         if i == 0:
             thisLayerRow.append("Effective\nInflow Layer")
         elif i == len(levelsToSample)-1:
@@ -356,8 +358,6 @@ def plotDynamics(profileData, ax):
             thisLayerRow.append(f"SFC->500m")
         else:
             thisLayerRow.append(f"SFC->{int(top.to(units.km).magnitude)}km")
-        bottom, top = levelsToSample[i]
-        depth = top - bottom
         layerForCalc = profileData.where((profileData.AGL >= bottom) & (profileData.AGL <= top), drop=True)
         layerForCalc = layerForCalc.where((np.isnan(layerForCalc.LEVEL) == False) & (np.isnan(layerForCalc.u) == False) & (np.isnan(layerForCalc.v) == False), drop=True)
         if len(layerForCalc.LEVEL.data) <= 2:
@@ -436,7 +436,7 @@ def plotDynamics(profileData, ax):
                 elif rowNum == 4:
                     color = "limegreen"
                 elif rowNum == 5:
-                    color = "gold"
+                    color = "goldenrod"
                 elif rowNum == 6:
                     color = "darkturquoise"
                 elif rowNum == 7:
@@ -753,15 +753,15 @@ def plotPsblHazType(profileData, ax, precipType):
             return
     if profileData.fixed_stp >= 1 or profileData.scp >= 4 or profileData.effective_stp >= 1:
         if profileData.muCINH > -50 * units.joule/units.kilogram:
-            ax.text(0.5, 0.9, "Possible\nHazard Type:\nSVR", color="goldenrod", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
+            ax.text(0.5, 0.9, "Possible\nHazard Type:\nSVR", color="y", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
             return
     if profileData.muCINH > -50 *units.joule/units.kilogram:
         if ship >=1 and profileData.scp >= 2:
-            ax.text(0.5, 0.9, "Possible\nHazard Type:\nSVR", color="goldenrod", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
+            ax.text(0.5, 0.9, "Possible\nHazard Type:\nSVR", color="y", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
             return
     
     if (profileData.scp >= 2 and ship >= 1) or profileData.dcape >= 750 * units.joule/units.kilogram and profileData.muCINH >= 50 * units.joule/units.kilogram:
-        ax.text(0.5, 0.9, "Possible\nHazard Type:\nSVR", color="goldenrod", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
+        ax.text(0.5, 0.9, "Possible\nHazard Type:\nSVR", color="y", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
         return
     if profileData.muCINH > -75 * units.joule/units.kilogram:
         if ship >= 0.5 or profileData.scp >= 0.5:
@@ -790,7 +790,7 @@ def plotHodograph(profileData, ax):
     [ax.text(i, 0, f"{i} kt", color="gray", clip_on=True, zorder=6) for i in np.arange(-200, 201, 10).astype(int)]
     profileData.u.data = profileData.u.data.to(units.kt)
     profileData.v.data = profileData.v.data.to(units.kt)
-    hodoPlot.plot_colormapped(profileData.u.data.magnitude, profileData.v.data.magnitude, profileData.AGL.data, colors=["fuchsia", "firebrick", "limegreen", "gold", "darkturquoise", "darkturquoise"], intervals=np.array([0, 1, 3, 6, 9, 12, 15])*units.km)
+    hodoPlot.plot_colormapped(profileData.u.data.magnitude, profileData.v.data.magnitude, profileData.AGL.data, colors=["fuchsia", "firebrick", "limegreen", "goldenrod", "darkturquoise", "darkturquoise"], intervals=np.array([0, 1, 3, 6, 9, 12, 15])*units.km)
     maxKm = np.nanmax(profileData.AGL.data.magnitude) // 1000
     kmToLabel = list(np.arange(1, np.min([maxKm+1, 7])))
     ax.scatter(profileData.u.data[0], profileData.v.data[0], color="black", marker="o", s=125, zorder=4)
@@ -956,7 +956,7 @@ def plotSkewT(profileData, skew, parcelType="sb"):
             (0, 1): "fuchsia",
             (1, 3): "firebrick",
             (3, 6): "limegreen",
-            (6, 9): "gold",
+            (6, 9): "goldenrod",
             (9, 12): "darkturquoise",
             (12, 15): "darkturquoise"
     }
@@ -982,8 +982,8 @@ def plotSkewT(profileData, skew, parcelType="sb"):
     skew.plot(profileData.LEVEL, profileData[parcelType+"ParcelPath"], "black", linewidth=1, zorder=6, linestyle="dashdot")
     skew.ax.plot([0, .95], [profileData.attrs[parcelType+"LCL"].magnitude, profileData.attrs[parcelType+"LCL"].magnitude], color="mediumseagreen", linewidth=1, transform=skew.ax.get_yaxis_transform())
     skew.ax.text(0.875, profileData.attrs[parcelType+"LCL"].magnitude, f"LCL: {profileData.attrs[parcelType+'LCL'].magnitude:.1f} hPa", color="mediumseagreen",  ha="left", va="top", path_effects=[withStroke(linewidth=3, foreground="white")], transform=skew.ax.get_yaxis_transform())
-    skew.ax.plot([0, .95], [profileData.attrs[parcelType+"LFC"].magnitude, profileData.attrs[parcelType+"LFC"].magnitude], color="goldenrod", linewidth=1, transform=skew.ax.get_yaxis_transform())
-    skew.ax.text(0.875, profileData.attrs[parcelType+"LFC"].magnitude, f"LFC: {profileData.attrs[parcelType+'LFC'].magnitude:.1f} hPa", color="goldenrod",  ha="left", va="top", path_effects=[withStroke(linewidth=3, foreground="white")], transform=skew.ax.get_yaxis_transform())
+    skew.ax.plot([0, .95], [profileData.attrs[parcelType+"LFC"].magnitude, profileData.attrs[parcelType+"LFC"].magnitude], color="darkgoldenrod", linewidth=1, transform=skew.ax.get_yaxis_transform())
+    skew.ax.text(0.875, profileData.attrs[parcelType+"LFC"].magnitude, f"LFC: {profileData.attrs[parcelType+'LFC'].magnitude:.1f} hPa", color="darkgoldenrod",  ha="left", va="top", path_effects=[withStroke(linewidth=3, foreground="white")], transform=skew.ax.get_yaxis_transform())
     skew.ax.plot([0, .95], [profileData.attrs[parcelType+"EL"].magnitude, profileData.attrs[parcelType+"EL"].magnitude], color="mediumpurple", linewidth=1, transform=skew.ax.get_yaxis_transform())
     skew.ax.text(0.875, profileData.attrs[parcelType+"EL"].magnitude, f"EL: {profileData.attrs[parcelType+'EL'].magnitude:.1f} hPa", color="mediumpurple",  ha="left", va="top", path_effects=[withStroke(linewidth=3, foreground="white")], transform=skew.ax.get_yaxis_transform())
    
