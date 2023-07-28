@@ -3,11 +3,13 @@
 # Created 17 May 2023 by Sam Gardner <sam@wx4stg.com>
 
 
+import airportsdata
+import requests
 from metpy.units import units
 import metpy.calc as mpcalc
 from metpy import plots
 from metpy import constants
-from metpy.io import add_station_lat_lon
+from metpy.io import add_station_lat_lon, parse_metar_to_dataframe
 from ecape.calc import calc_ecape
 from matplotlib import pyplot as plt
 from matplotlib.table import table
@@ -50,10 +52,12 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     
     soundingDS["LEVEL_unitless"] = soundingDS.LEVEL
     startLevel = (soundingDS.LEVEL.data[0] // 1)
+    endLevel = (soundingDS.LEVEL.data[-1] // 1)
     soundingDS = soundingDS.swap_dims({"index" : "LEVEL_unitless"})
     soundingDS = soundingDS.drop("index")
     soundingDS = soundingDS.sortby("LEVEL")
-    soundingDS = soundingDS.interp(LEVEL_unitless=np.arange(10, startLevel+.05, 1))
+    soundingDS = soundingDS.drop_duplicates(dim="LEVEL_unitless", keep="first")
+    soundingDS = soundingDS.interp(LEVEL_unitless=np.arange(endLevel, startLevel+.05, 1))
     soundingDS = soundingDS.interpolate_na(dim="LEVEL_unitless")
     soundingDS = soundingDS.sortby("LEVEL_unitless", ascending=False)
     soundingDS["index"] = np.arange(len(soundingDS.LEVEL.data))
@@ -158,9 +162,18 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     # storm motion
     soundingDS.attrs["bunkers_RM"], soundingDS.attrs["bunkers_LM"], soundingDS.attrs["zeroToSixMean"] = mpcalc.bunkers_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
     soundingDS.attrs["corfidi_up"], soundingDS.attrs["corfidi_down"] = mpcalc.corfidi_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
-    soundingDS.attrs["sfc_to_one_shear"] = mpcalc.bulk_shear(soundingDS.LEVEL, soundingDS.u, soundingDS.v, depth=1000 * units.meter)
-    soundingDS.attrs["sfc_to_six_shear"] = mpcalc.bulk_shear(soundingDS.LEVEL, soundingDS.u, soundingDS.v, depth=6000 * units.meter)
-    soundingDS.attrs["sfc_to_eight_shear"] = mpcalc.bulk_shear(soundingDS.LEVEL, soundingDS.u, soundingDS.v, depth=8000 * units.meter)
+    if np.nanmax(soundingDS.AGL.data) > 1000 * units.meter:
+        soundingDS.attrs["sfc_to_one_shear"] = mpcalc.bulk_shear(soundingDS.LEVEL, soundingDS.u, soundingDS.v, depth=1000 * units.meter)
+    else:
+        soundingDS.attrs["sfc_to_one_shear"] = [np.nan * units.knot, np.nan * units.knot]
+    if np.nanmax(soundingDS.AGL.data) > 6000 * units.meter:
+        soundingDS.attrs["sfc_to_six_shear"] = mpcalc.bulk_shear(soundingDS.LEVEL, soundingDS.u, soundingDS.v, depth=6000 * units.meter)
+    else:
+        soundingDS.attrs["sfc_to_six_shear"] = [np.nan * units.knot, np.nan * units.knot]
+    if np.nanmax(soundingDS.AGL.data) > 8000 * units.meter:
+        soundingDS.attrs["sfc_to_eight_shear"] = mpcalc.bulk_shear(soundingDS.LEVEL, soundingDS.u, soundingDS.v, depth=8000 * units.meter)
+    else:
+        soundingDS.attrs["sfc_to_eight_shear"] = [np.nan * units.knot, np.nan * units.knot]
     # SRH
     soundingDS.attrs["RM_SRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=3000*units.meter, storm_u=soundingDS.bunkers_RM[0], storm_v=soundingDS.bunkers_RM[1])[2]
     soundingDS.attrs["MW_SRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=3000*units.meter, storm_u=soundingDS.zeroToSixMean[0], storm_v=soundingDS.zeroToSixMean[1])[2]
@@ -932,7 +945,12 @@ def plotSkewT(profileData, skew, parcelType="sb"):
     skew.plot(profileData.LEVEL, profileData.wetbulb.data.to(units.degC), "cyan", linewidth=0.5, zorder=3)
     mask = mpcalc.resample_nn_1d(profileData.LEVEL.data.to(units.hPa).magnitude,  np.logspace(4, 2))
     skew.plot_barbs(profileData.LEVEL.data[mask], profileData.u.data.to(units.kt)[mask], profileData.v.data.to(units.kt)[mask])
-    skew.ax.set_xlim(10*(np.nanmin(profileData.TEMP.data.to(units.degC).magnitude) // 10)+10, (10*np.nanmax(profileData.TEMP.data.to(units.degC).magnitude) // 10)+10)
+    xlimmin = 10*(np.nanmin(profileData.TEMP.data.to(units.degC).magnitude) // 10)+10
+    xlimmax = (10*np.nanmax(profileData.TEMP.data.to(units.degC).magnitude) // 10)+10
+    if xlimmax - xlimmin < 110:
+        xlimmin = xlimmax - 110
+    print(xlimmin, xlimmax)
+    skew.ax.set_xlim(xlimmin, xlimmax)
     skew.ax.set_xlabel("Temperature (°C)")
     skew.ax.set_ylabel("Pressure (hPa)")
     skew.ax.set_ylim(np.nanmax(profileData.LEVEL.data.magnitude)+5, 100)
@@ -1114,8 +1132,64 @@ def plotSounding(profileData, outputPath, icao, time):
     mapAx.set_position([16*width_unit, 7*height_unit, 3*width_unit, 2*height_unit])
     Path(path.dirname(outputPath)).mkdir(parents=True, exist_ok=True)
     fig.savefig(outputPath)
-    exit()
 
+
+def readACARS(acarsDatasetPath):
+    acarsDataset = xr.open_dataset(acarsDatasetPath)
+    air = airportsdata.load("IATA")
+    for i in range(len(acarsDataset.recNum)):
+        thisSounding = acarsDataset.isel(recNum=i)
+        thisSoundingICAO = air[bytes(thisSounding.profileAirport.data).decode("utf-8")[:3]]["icao"]
+        thisSoundingTime = pd.to_datetime(pd.Timestamp(thisSounding.profileTime.data.item()))
+        saveFilePath = path.join(sys.argv[2], thisSoundingICAO, thisSoundingTime.strftime("%Y"), thisSoundingTime.strftime("%m"), thisSoundingTime.strftime("%d"), thisSoundingTime.strftime("%H%M.png"))
+        if path.exists(saveFilePath):
+            continue
+        latestMetar = requests.get(f"https://www.aviationweather.gov/metar/data?ids={thisSoundingICAO}&format=raw&taf=off").content.decode("utf-8")
+        if "No METAR found for" in latestMetar:
+            continue
+        latestMetar = parse_metar_to_dataframe(latestMetar[latestMetar.find("<code>")+6:latestMetar.find("</code>")])
+        altitudes = [latestMetar["elevation"].values[0] * units("m")]
+        temperatures = [latestMetar["air_temperature"].values[0] * units("degC")]
+        dewpoints = [latestMetar["dew_point_temperature"].values[0] * units("degC")]
+        windDirection = [latestMetar["wind_direction"].values[0] * units.deg]
+        windSpeed = [latestMetar["wind_speed"].values[0] * units("kt")]
+        airportBarometer = mpcalc.altimeter_to_station_pressure(latestMetar["altimeter"].values[0] * units("inHg"), latestMetar["elevation"].values[0] * units("m")).to("hPa")
+        pressure = [airportBarometer]
+        virtTemp = [mpcalc.virtual_temperature(latestMetar["air_temperature"].values[0] * units("degC"), mpcalc.mixing_ratio_from_specific_humidity(mpcalc.specific_humidity_from_dewpoint(airportBarometer, latestMetar["dew_point_temperature"].values[0] * units("degC"))))]
+        for ii in range(0, len(thisSounding.altitude)):
+            if np.isnan(thisSounding.altitude.data[ii]) or np.isnan(thisSounding.temperature.data[ii]):# or np.isnan(thisSounding.dewpoint.data[ii]) or np.isnan(thisSounding.windDir.data[ii]) or np.isnan(thisSounding.windSpeed.data[ii]):
+                continue
+            if thisSounding.altitude.data[ii] * units.meter in altitudes:
+                continue
+            thisTemp = thisSounding.temperature.data[ii] * units("K")
+            lastTemp = temperatures[-1]
+            thisAlt = thisSounding.altitude.data[ii] * units("m")
+            lastAlt = altitudes[-1]
+            lastPressure = pressure[-1]
+            
+            thisPressureFactor = (np.abs(lastTemp*lastAlt-thisTemp*thisAlt)/np.abs(lastTemp*(2*lastAlt-thisAlt)-thisTemp*lastAlt))**((9.81*(lastAlt-thisAlt))/(287*(lastTemp-thisTemp))).magnitude
+            topPressure = lastPressure*thisPressureFactor**(-1)
+            
+            if topPressure not in pressure:
+                temperatures.append(thisTemp)
+                dewpoints.append(thisSounding.dewpoint.data[ii] * units("K"))
+                windDirection.append(thisSounding.windDir.data[ii] * units.deg)
+                windSpeed.append((thisSounding.windSpeed.data[ii] * units("meter / second")).to("kt"))
+                altitudes.append(thisAlt)
+                pressure.append(topPressure)
+                virtTemp.append(mpcalc.virtual_temperature(thisTemp, mpcalc.mixing_ratio_from_specific_humidity(mpcalc.specific_humidity_from_dewpoint(lastPressure, dewpoints[-1]))))
+        
+        pressure = np.array([pres.to("hPa").magnitude for pres in pressure])
+        temperatures = np.array([temp.to("degC").magnitude for temp in temperatures])
+        dewpoints = np.array([dew.to("degC").magnitude for dew in dewpoints])
+        windDirection = np.array([windDir.to("deg").magnitude for windDir in windDirection])
+        windSpeed = np.array([windSpd.to("kt").magnitude for windSpd in windSpeed])
+        altitudes = np.array([alt.to("m").magnitude for alt in altitudes])
+
+        soundingDataFrame = pd.DataFrame({"LEVEL": pressure, "HGHT": altitudes, "TEMP": temperatures, "DWPT": dewpoints, "WDIR": windDirection, "WSPD": windSpeed}).sort_values("LEVEL", ascending=False)
+        data = makeSoundingDataset(soundingDataFrame, thisSoundingICAO, thisSoundingTime)
+        saveFilePath = path.join(sys.argv[2], thisSoundingICAO, thisSoundingTime.strftime("%Y"), thisSoundingTime.strftime("%m"), thisSoundingTime.strftime("%d"), thisSoundingTime.strftime("%H%M.png"))
+        plotSounding(data, saveFilePath, thisSoundingICAO, thisSoundingTime)
 
 
 def readSharppy(fileName):
@@ -1152,5 +1226,8 @@ if __name__ == "__main__":
     if not path.exists(sys.argv[1]):
         print("Input file does not exist!")
         exit()
-    profileData, icao, datetime  = readSharppy(sys.argv[1])
-    plotSounding(profileData, sys.argv[2], icao, datetime)
+    if sys.argv[1].endswith("acars.nc"):
+        profileData, icao, datetime = readACARS(sys.argv[1])
+    else:
+        profileData, icao, datetime  = readSharppy(sys.argv[1])
+        plotSounding(profileData, sys.argv[2], icao, datetime)
