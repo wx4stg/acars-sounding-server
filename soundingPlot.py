@@ -85,7 +85,16 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     for i in range(len(soundingDS.LEVEL.data)):
         slicedProfile = soundingDS.isel(LEVEL_unitless=slice(i, len(soundingDS.LEVEL.data)))
         capeProfile = mpcalc.parcel_profile(slicedProfile.LEVEL, slicedProfile.TEMP[0], slicedProfile.DWPT[0]).data
-        cape, cinh = mpcalc.cape_cin(slicedProfile.LEVEL, slicedProfile.TEMP, slicedProfile.DWPT, parcel_profile=capeProfile)
+        cape, cinh = mpcalc.cape_cin(slicedProfile.LEVEL.data, slicedProfile.TEMP.data, slicedProfile.DWPT.data, parcel_profile=capeProfile)
+        # try:
+        #     cape, cinh = mpcalc.cape_cin(slicedProfile.LEVEL.data, slicedProfile.TEMP.data, slicedProfile.DWPT.data, parcel_profile=capeProfile)
+        # except ValueError as e:
+        #     print(slicedProfile.LEVEL.data)
+        #     print(slicedProfile.TEMP.data)
+        #     print(slicedProfile.DWPT.data)
+        #     testDF = pd.DataFrame({"LEVEL" : slicedProfile.LEVEL.data, "TEMP" : slicedProfile.TEMP.data, "DWPT" : slicedProfile.DWPT.data})
+        #     testDF.to_csv("test.csv")
+        #     mpcalc.lfc(slicedProfile.LEVEL.data, slicedProfile.TEMP.data, slicedProfile.DWPT.data, parcel_temperature_profile=capeProfile, which="bottom")
         if cape.magnitude >= 100 and cinh.magnitude >= -250:
                 inflowTop = soundingDS.LEVEL.data[i]
                 if np.isnan(inflowBottom):
@@ -93,13 +102,16 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
         else:
             if not np.isnan(inflowBottom):
                 break
+    if inflowBottom == inflowTop:
+        inflowBottom = np.nan
+        inflowTop = np.nan
     soundingDS.attrs["inflowBottom"] = inflowBottom
     soundingDS.attrs["inflowTop"] = inflowTop
 
     # Calculate parcel paths, LCLs, LFCs, ELs, CAPE, CINH
     # surface-based
-    sbParcelPath = mpcalc.parcel_profile(soundingDS.LEVEL, soundingDS.virtT[0], soundingDS.DWPT[0]).data
-    soundingDS["sbParcelPath"] = sbParcelPath
+    sbParcelPath = mpcalc.parcel_profile(soundingDS.LEVEL, soundingDS.TEMP[0], soundingDS.DWPT[0]).data
+    soundingDS["sbParcelPath"] = sbParcelPath.to(units.degC)
     soundingDS.attrs["sbLCL"] = mpcalc.lcl(soundingDS.LEVEL[0], soundingDS.virtT[0], soundingDS.DWPT[0])[0]
     soundingDS.attrs["sbLFC"] = mpcalc.lfc(soundingDS.LEVEL, soundingDS.virtT, soundingDS.DWPT, parcel_temperature_profile=sbParcelPath)[0]
     soundingDS.attrs["sbEL"] = mpcalc.el(soundingDS.LEVEL, soundingDS.virtT, soundingDS.DWPT, parcel_temperature_profile=sbParcelPath)[0]
@@ -110,28 +122,38 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     soundingDS.attrs["mu_initPressure"], soundingDS.attrs["mu_initTemp"], soundingDS.attrs["mu_initDewpoint"] = initPressure, initTemp, initDewpoint
     initVirtT = mpcalc.virtual_temperature_from_dewpoint(initPressure, initTemp, initDewpoint)
     muParcelPath = np.empty(soundingDS.LEVEL.data.shape)
-    muParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initVirtT, initDewpoint).data.to(units.degK).magnitude
+    muParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initTemp, initDewpoint).data.to(units.degK).magnitude
     muParcelPath[:initIdx] = np.nan
     muParcelPath = muParcelPath * units.degK
-    soundingDS["muParcelPath"] = muParcelPath
-    soundingDS.attrs["muLCL"] = mpcalc.lcl(initPressure, initVirtT, initDewpoint)[0]
+    soundingDS["muParcelPath"] = muParcelPath.to(units.degC)
+    soundingDS.attrs["muLCL"] = mpcalc.lcl(initPressure, initTemp, initDewpoint)[0]
     soundingDS.attrs["muLFC"] = mpcalc.lfc(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=muParcelPath[initIdx:])[0]
     soundingDS.attrs["muEL"] = mpcalc.el(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=muParcelPath[initIdx:])[0]
     soundingDS.attrs["muCAPE"], soundingDS.attrs["muCINH"] = mpcalc.most_unstable_cape_cin(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     
     # 100-hPa mixed layer
-    initPressure, initTemp, initDewpoint = mpcalc.mixed_parcel(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
-    initIdx = len(soundingDS.where(soundingDS.LEVEL >= initPressure, drop=True).LEVEL.data)
-    initVirtT = mpcalc.virtual_temperature_from_dewpoint(initPressure, initTemp, initDewpoint)
     mlParcelPath = np.empty(soundingDS.LEVEL.data.shape)
-    mlParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initVirtT, initDewpoint)
-    mlParcelPath[:initIdx] = np.nan
-    mlParcelPath = mlParcelPath * units.degK
-    soundingDS["mlParcelPath"] = mlParcelPath
-    soundingDS.attrs["mlLCL"] = mpcalc.lcl(initPressure, initVirtT, initDewpoint)[0]
-    soundingDS.attrs["mlLFC"] = mpcalc.lfc(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=mlParcelPath[initIdx:])[0]
-    soundingDS.attrs["mlEL"] = mpcalc.el(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=mlParcelPath[initIdx:])[0]
-    soundingDS.attrs["mlCAPE"], soundingDS.attrs["mlCINH"] = mpcalc.mixed_layer_cape_cin(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+    if np.nanmax(soundingDS.LEVEL.data) - np.nanmin(soundingDS.LEVEL.data) > 100 * units.hPa:
+        initPressure, initTemp, initDewpoint = mpcalc.mixed_parcel(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+        initIdx = len(soundingDS.where(soundingDS.LEVEL >= initPressure, drop=True).LEVEL.data)
+        initVirtT = mpcalc.virtual_temperature_from_dewpoint(initPressure, initTemp, initDewpoint)
+        mlParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initVirtT, initDewpoint)
+        mlParcelPath[:initIdx] = np.nan
+        mlParcelPath = mlParcelPath * units.degK
+        soundingDS["mlParcelPath"] = mlParcelPath.to(units.degC)
+        soundingDS.attrs["mlLCL"] = mpcalc.lcl(initPressure, initVirtT, initDewpoint)[0]
+        soundingDS.attrs["mlLFC"] = mpcalc.lfc(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=mlParcelPath[initIdx:])[0]
+        soundingDS.attrs["mlEL"] = mpcalc.el(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=mlParcelPath[initIdx:])[0]
+        soundingDS.attrs["mlCAPE"], soundingDS.attrs["mlCINH"] = mpcalc.mixed_layer_cape_cin(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+    else:
+        mlParcelPath[:] = np.nan
+        mlParcelPath = mlParcelPath * units.degK
+        soundingDS["mlParcelPath"] = mlParcelPath.to(units.degC)
+        soundingDS.attrs["mlLCL"] = np.nan * units.hPa
+        soundingDS.attrs["mlLFC"] = np.nan * units.hPa
+        soundingDS.attrs["mlEL"] = np.nan * units.hPa
+        soundingDS.attrs["mlCAPE"] = np.nan * units.joule/units.kilogram
+        soundingDS.attrs["mlCINH"] = np.nan * units.joule/units.kilogram
 
     # effective inflow layer
     inflowParcelPath = np.empty(soundingDS.LEVEL.data.shape)
@@ -139,7 +161,7 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
         initPressure, initTemp, initDewpoint = mpcalc.mixed_parcel(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT, parcel_start_pressure=inflowBottom, depth=(inflowBottom - inflowTop))
         initIdx = soundingDS.where(soundingDS.LEVEL >= initPressure, drop=True).index.data[0]
         initVirtT = mpcalc.virtual_temperature_from_dewpoint(initPressure, initTemp, initDewpoint)
-        inflowParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initVirtT, initDewpoint).data.to(units.degK).magnitude
+        inflowParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], soundingDS.TEMP[initIdx], soundingDS.DWPT[initIdx]).data.to(units.degK).magnitude
         inflowParcelPath[:initIdx] = np.nan
         inflowParcelPath = inflowParcelPath * units.degK
         soundingDS.attrs["inLCL"] = mpcalc.lcl(initPressure, initVirtT, initDewpoint)[0]
@@ -148,11 +170,12 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
         soundingDS.attrs["inCAPE"], soundingDS.attrs["inCINH"] = mpcalc.mixed_layer_cape_cin(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT, parcel_start_pressure=inflowBottom, depth=(inflowBottom - inflowTop))
     else:
         inflowParcelPath[:] = np.nan
+        inflowParcelPath = inflowParcelPath * units.degK
         soundingDS.attrs["inLCL"] = np.nan * units.hPa
         soundingDS.attrs["inLFC"] = np.nan * units.hPa
         soundingDS.attrs["inEL"] = np.nan * units.hPa
         soundingDS.attrs["inCAPE"], soundingDS.attrs["inCINH"] = np.nan * units.joule/units.kilogram, np.nan * units.joule/units.kilogram
-    soundingDS["inParcelPath"] = inflowParcelPath
+    soundingDS["inParcelPath"] = inflowParcelPath.to(units.degC)
     # Cloud Layer heights
     soundingDS.attrs["cloudLayerBottom"] = soundingDS.attrs[selectedParcel+"LCL"]
     soundingDS.attrs["cloudLayerTop"] = soundingDS.attrs[selectedParcel+"EL"]
@@ -160,8 +183,34 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     # pwat
     soundingDS.attrs["pwat"] = mpcalc.precipitable_water(soundingDS.LEVEL, soundingDS.DWPT).to(units.inch)
     # storm motion
-    soundingDS.attrs["bunkers_RM"], soundingDS.attrs["bunkers_LM"], soundingDS.attrs["zeroToSixMean"] = mpcalc.bunkers_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
-    soundingDS.attrs["corfidi_up"], soundingDS.attrs["corfidi_down"] = mpcalc.corfidi_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
+    if np.nanmax(soundingDS.AGL.data) > 6000 * units.meter:
+        soundingDS.attrs["bunkers_RM"], soundingDS.attrs["bunkers_LM"], soundingDS.attrs["zeroToSixMean"] = mpcalc.bunkers_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
+        soundingDS.attrs["corfidi_up"], soundingDS.attrs["corfidi_down"] = mpcalc.corfidi_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
+        # SRH
+        soundingDS.attrs["RM_SRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=3000*units.meter, storm_u=soundingDS.bunkers_RM[0], storm_v=soundingDS.bunkers_RM[1])[2]
+        soundingDS.attrs["MW_SRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=3000*units.meter, storm_u=soundingDS.zeroToSixMean[0], storm_v=soundingDS.zeroToSixMean[1])[2]
+        soundingDS.attrs["LM_SRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=3000*units.meter, storm_u=soundingDS.bunkers_LM[0], storm_v=soundingDS.bunkers_LM[1])[2]
+        # RH
+        soundingDS.attrs["LL_RH"] = soundingDS.where(soundingDS.LEVEL >= soundingDS.LEVEL[0] - 100*units.hPa, drop=True).RH.data.mean()
+        soundingDS.attrs["ML_RH"] = soundingDS.where(soundingDS.LEVEL >= soundingDS.LEVEL[0] - 350*units.hPa, drop=True).RH.data.mean()
+        # which bunkers is favored
+        if soundingDS.attrs["RM_SRH"] >= soundingDS.attrs["LM_SRH"]:
+            soundingDS.attrs["favored_motion"] = "RM"
+        else:
+            soundingDS.attrs["favored_motion"] = "LM"
+    else:
+        soundingDS.attrs["bunkers_RM"] = (np.nan * units.knot, np.nan * units.knot)
+        soundingDS.attrs["bunkers_LM"] = (np.nan * units.knot, np.nan * units.knot)
+        soundingDS.attrs["zeroToSixMean"] = (np.nan * units.knot, np.nan * units.knot)
+        soundingDS.attrs["corfidi_up"] = (np.nan * units.knot, np.nan * units.knot)
+        soundingDS.attrs["corfidi_down"] = (np.nan * units.knot, np.nan * units.knot)
+        soundingDS.attrs["RM_SRH"] = np.nan * units.meter**2/units.second**2
+        soundingDS.attrs["MW_SRH"] = np.nan * units.meter**2/units.second**2
+        soundingDS.attrs["LM_SRH"] = np.nan * units.meter**2/units.second**2
+        soundingDS.attrs["LL_RH"] = np.nan * units.percent
+        soundingDS.attrs["ML_RH"] = np.nan * units.percent
+        soundingDS.attrs["favored_motion"] = None
+    
     if np.nanmax(soundingDS.AGL.data) > 1000 * units.meter:
         soundingDS.attrs["sfc_to_one_shear"] = mpcalc.bulk_shear(soundingDS.LEVEL, soundingDS.u, soundingDS.v, depth=1000 * units.meter)
     else:
@@ -174,13 +223,6 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
         soundingDS.attrs["sfc_to_eight_shear"] = mpcalc.bulk_shear(soundingDS.LEVEL, soundingDS.u, soundingDS.v, depth=8000 * units.meter)
     else:
         soundingDS.attrs["sfc_to_eight_shear"] = [np.nan * units.knot, np.nan * units.knot]
-    # SRH
-    soundingDS.attrs["RM_SRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=3000*units.meter, storm_u=soundingDS.bunkers_RM[0], storm_v=soundingDS.bunkers_RM[1])[2]
-    soundingDS.attrs["MW_SRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=3000*units.meter, storm_u=soundingDS.zeroToSixMean[0], storm_v=soundingDS.zeroToSixMean[1])[2]
-    soundingDS.attrs["LM_SRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=3000*units.meter, storm_u=soundingDS.bunkers_LM[0], storm_v=soundingDS.bunkers_LM[1])[2]
-    # RH
-    soundingDS.attrs["LL_RH"] = soundingDS.where(soundingDS.LEVEL >= soundingDS.LEVEL[0] - 100*units.hPa, drop=True).RH.data.mean()
-    soundingDS.attrs["ML_RH"] = soundingDS.where(soundingDS.LEVEL >= soundingDS.LEVEL[0] - 350*units.hPa, drop=True).RH.data.mean()
 
     # AGL versions of the pressure levels
     for key, value in soundingDS.attrs.copy().items():
@@ -188,32 +230,34 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
             if np.isnan(value):
                 soundingDS.attrs[key+"_agl"] = np.nan * units.meter
             else:
-                agl1 = soundingDS.where(soundingDS.LEVEL >= value, drop=True).AGL.data[-1].to(units.meter).magnitude
-                agl2 = soundingDS.where(soundingDS.LEVEL <= value, drop=True).AGL.data[0].to(units.meter).magnitude
-                soundingDS.attrs[key+"_agl"] = np.mean([agl1, agl2]) * units.meter
-    # which bunkers is favored
-    if soundingDS.attrs["RM_SRH"] >= soundingDS.attrs["LM_SRH"]:
-        soundingDS.attrs["favored_motion"] = "RM"
-    else:
-        soundingDS.attrs["favored_motion"] = "LM"
+                soundingDS.attrs[key+"_agl"] = soundingDS.interp(LEVEL_unitless=value.to(units.hPa).magnitude).AGL.data * units.meter
 
     # Other assorted params needed for SHARPpy's hazard type decision tree
     soundingDS.attrs["sfc_to_one_LR"] = -((soundingDS.TEMP.data[0] - soundingDS.where(soundingDS.AGL <= 1000 * units.meter, drop=True).TEMP.data[-1])/(soundingDS.AGL.data[0] - soundingDS.where(soundingDS.AGL <= 1000 * units.meter, drop=True).AGL.data[-1]).to(units.km))
     soundingDS.attrs["five_to_seven_LR"] = -((soundingDS.where(soundingDS.LEVEL >= 500 * units.hPa, drop=True).TEMP.data[-1] - soundingDS.where(soundingDS.LEVEL >= 700 * units.hPa, drop=True).TEMP.data[-1])/(soundingDS.where(soundingDS.LEVEL >= 500 * units.hPa, drop=True).HGHT.data[-1] - soundingDS.where(soundingDS.LEVEL >= 700 * units.hPa, drop=True).HGHT.data[-1]).to(units.km))
-    soundingDS.attrs["freezing_level_agl"] = soundingDS.where(soundingDS.TEMP <= 0 * units.degC, drop=True).AGL.data[0]
-    soundingDS.attrs["favored1kmSRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=1000*units.meter, storm_u=soundingDS.attrs["bunkers_"+soundingDS.favored_motion][0], storm_v=soundingDS.attrs["bunkers_"+soundingDS.favored_motion][1])[2]
-    soundingDS.attrs["fixed_stp"] = mpcalc.significant_tornado(soundingDS.sbCAPE, soundingDS.sbLCL_agl, soundingDS.favored1kmSRH, mpcalc.wind_speed(*soundingDS.sfc_to_six_shear)).to_base_units().magnitude[0]
-    cinTerm = 1
-    if soundingDS.mlCINH > -50 * units.joule/units.kilogram:
+    if np.min(soundingDS.TEMP.data) < 0 * units.degC:
+        soundingDS.attrs["freezing_level_agl"] = soundingDS.where(soundingDS.TEMP <= 0 * units.degC, drop=True).AGL.data[0]
+    else: 
+        soundingDS.attrs["freezing_level_agl"] = np.nan * units.meter
+    if soundingDS.favored_motion is not None:
+        soundingDS.attrs["favored1kmSRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=1000*units.meter, storm_u=soundingDS.attrs["bunkers_"+soundingDS.favored_motion][0], storm_v=soundingDS.attrs["bunkers_"+soundingDS.favored_motion][1])[2]
+        soundingDS.attrs["fixed_stp"] = mpcalc.significant_tornado(soundingDS.sbCAPE, soundingDS.sbLCL_agl, soundingDS.favored1kmSRH, mpcalc.wind_speed(*soundingDS.sfc_to_six_shear)).to_base_units().magnitude[0]
         cinTerm = 1
-    elif soundingDS.mlCINH < -200 * units.joule/units.kilogram:
-        cinTerm = 0
+        if soundingDS.mlCINH > -50 * units.joule/units.kilogram:
+            cinTerm = 1
+        elif soundingDS.mlCINH < -200 * units.joule/units.kilogram:
+            cinTerm = 0
+        else:
+            cinTerm = ((soundingDS.mlCINH.magnitude + 200.) / 150.)
+        soundingDS.attrs["effective_stp"] = (soundingDS.fixed_stp * cinTerm)
     else:
-        cinTerm = ((soundingDS.mlCINH.magnitude + 200.) / 150.)
-    soundingDS.attrs["effective_stp"] = (soundingDS.fixed_stp * cinTerm)
-    shearMag = mpcalc.wind_speed(*soundingDS.attrs["sfc_to_six_shear"])
+        soundingDS.attrs["favored1kmSRH"] = np.nan * units.meter**2/units.second**2
+        soundingDS.attrs["fixed_stp"] = 0 * units.dimensionless
+        soundingDS.attrs["effective_stp"] = 0 * units.dimensionless
+    if not np.isnan(soundingDS.attrs["sfc_to_six_shear"][0]):
+        shearMag = mpcalc.wind_speed(*soundingDS.attrs["sfc_to_six_shear"])
     layerForCalc = soundingDS.where((soundingDS.LEVEL <= soundingDS.inflowBottom) & (soundingDS.LEVEL >= soundingDS.inflowTop), drop=True)
-    if len(layerForCalc.LEVEL.data) > 0:
+    if len(layerForCalc.LEVEL.data) > 0 and soundingDS.attrs["favored_motion"] is not None:
         bottom = layerForCalc.AGL.data[0]
         top = layerForCalc.AGL.data[-1]
         depth = (top - bottom)
@@ -224,10 +268,20 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     soundingDS.attrs["k"] = mpcalc.k_index(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     soundingDS.attrs["totaltotals"] = mpcalc.total_totals_index(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     soundingDS.attrs["sweat"] = mpcalc.sweat_index(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT, soundingDS.WSPD, soundingDS.WDIR)[0]
-    _, _, soundingDS.attrs["convT"] = mpcalc.ccl(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
-
+    try:
+        _, _, soundingDS.attrs["convT"] = mpcalc.ccl(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+    except IndexError as e:
+        print(e)
+        soundingDS.attrs["convT"] = np.nan * units.degC
     # DCAPE
-    soundingDS.attrs["dcape"], soundingDS["dcape_levels"], soundingDS.attrs["dcape_profile"]  = mpcalc.down_cape(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+    if np.nanmax(soundingDS.LEVEL.data) > 700 * units.hPa and np.nanmin(soundingDS.LEVEL.data) < 500 * units.hPa:
+        soundingDS.attrs["dcape"], soundingDS["dcape_levels"], soundingDS.attrs["dcape_profile"]  = mpcalc.down_cape(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+    else:
+        soundingDS.attrs["dcape"] = 0 * units.joule/units.kilogram
+        dcapeLevels = np.empty(soundingDS.LEVEL.data.shape)
+        dcapeLevels[:] = np.nan
+        soundingDS["dcape_levels"] = dcapeLevels
+        soundingDS.attrs["dcape_profile"] = [np.nan * units.degC]
 
     return soundingDS
     
@@ -237,12 +291,18 @@ def plotParams(profileData, ax):
     ax.text(0.4, 0.79, f"SCP:\n{profileData.scp.magnitude:.1f}", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
     ax.text(0.65, 0.79, f"K:\n{profileData.k.magnitude:.1f}", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
     ax.text(0.99, 0.79, f"eSTP:\n{profileData.effective_stp:.1f}", ha="right", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
-    downMax = (2*profileData.dcape.to('J/kg').magnitude)**0.5
-    ax.text(0.5, 0.6, f"DCAPE:\n{int(profileData.dcape.to('J/kg').magnitude)} J/kg, {downMax:.1f} m/s, {int(profileData.dcape_profile[0].to(units.degF).magnitude)}F", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    if not np.isnan(profileData.dcape_profile[0]):
+        downMax = (2*profileData.dcape.to('J/kg').magnitude)**0.5
+        ax.text(0.5, 0.6, f"DCAPE:\n{int(profileData.dcape.to('J/kg').magnitude)} J/kg, {downMax:.1f} m/s, {int(profileData.dcape_profile[0].to(units.degF).magnitude)}F", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    else:
+        ax.text(0.5, 0.6, f"DCAPE:\nN/A", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
     ax.text(0, 0.44, f"PWAT:\n{profileData.pwat.to('in').magnitude:.2f} in", ha="left", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
     ax.text(0.5, 0.44, f"TT:\n{profileData.totaltotals.magnitude:.1f}", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
-    ax.text(0.99, 0.44, f"ConvT:\n{int(profileData.convT.to(units.degF).magnitude)}°F", ha="right", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
-    
+    if not np.isnan(profileData.convT):
+        ax.text(0.99, 0.44, f"ConvT:\n{int(profileData.convT.to(units.degF).magnitude)}°F", ha="right", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+    else:
+        ax.text(0.99, 0.44, f"ConvT:\nN/A", ha="right", va="top", transform=ax.transAxes, clip_on=False, zorder=5)
+
     TorLR = -((profileData.TEMP.data[0] - profileData.where(profileData.AGL <= 500 * units.meter, drop=True).TEMP.data[-1])/(profileData.AGL.data[0] - profileData.where(profileData.AGL <= 500 * units.meter, drop=True).AGL.data[-1]).to(units.km))
     LLLR = -((profileData.TEMP.data[0] - profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).TEMP.data[-1])/(profileData.AGL.data[0] - profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).AGL.data[-1]).to(units.km))
     MLLR = -((profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).TEMP.data[-1] - profileData.where(profileData.AGL <= 6000 * units.meter, drop=True).TEMP.data[-1])/(profileData.where(profileData.AGL <= 3000 * units.meter, drop=True).AGL.data[-1] - profileData.where(profileData.AGL <= 6000 * units.meter, drop=True).AGL.data[-1]).to(units.km))
@@ -254,24 +314,36 @@ def plotParams(profileData, ax):
 
 def plotThermoynamics(profileData, ax, parcelType="sb"):
     thermodynamicsTableContent = [["Parcel", "CAPE", "CINH", "ECAPE", "LCL", "LFC", "EL", "0->3km\nCAPE"]]
-
     variables = [
         ("Surface Based", mpcalc.surface_based_cape_cin),
-        ("Mixed Layer", mpcalc.mixed_layer_cape_cin),
-        ("Most Unstable", mpcalc.most_unstable_cape_cin)
     ]
-
+    if not np.isnan(profileData.mlCAPE):
+        variables.append(("Mixed Layer", mpcalc.mixed_layer_cape_cin))
+    else:
+        variables.append(("Mixed Layer", None))
+    if not np.isnan(profileData.muCAPE):
+        variables.append(("Most Unstable", mpcalc.most_unstable_cape_cin))
+    else:
+        variables.append(("Most Unstable", None))
     for var in variables:
         caption, cape_func = var
+        if cape_func is None:
+            thermodynamicsTableContent.append([caption, "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"])
+            continue
         capeType = "".join([letter.lower() for letter in caption if letter.isupper()])
         try:
             ecape = calc_ecape(profileData.HGHT.data, profileData.LEVEL.data, profileData.TEMP.data, mpcalc.specific_humidity_from_dewpoint(profileData.LEVEL.data, profileData.DWPT.data), profileData.u.data, profileData.v.data, cape_type=caption.lower().replace(" ", "_"))
-        except IndexError:
+        except Exception as e:
             ecape = 0 * units.joule/units.kilogram
+            print(e)
         lvlBelow3 = profileData.where(profileData.AGL <= 3000*units.meter, drop=True).LEVEL.data
         tempBelow3 = profileData.where(profileData.AGL <= 3000*units.meter, drop=True).TEMP.data
         dwptBelow3 = profileData.where(profileData.AGL <= 3000*units.meter, drop=True).DWPT.data
-        cape3km = cape_func(lvlBelow3, tempBelow3, dwptBelow3)[0]
+        try:
+            cape3km = cape_func(lvlBelow3, tempBelow3, dwptBelow3)[0]
+        except Exception as e:
+            cape3km = np.nan * units.joule/units.kilogram
+            
 
         if not np.isnan(profileData.attrs[capeType+'CAPE']):
             wmax = (2*profileData.attrs[capeType+'CAPE'].to('J/kg').magnitude)**0.5
@@ -346,9 +418,10 @@ def plotThermoynamics(profileData, ax, parcelType="sb"):
             cape3kmLbl = f"{int(cape3km.magnitude)} J/kg"
         else:
             cape3kmLbl = "0 J/kg"
-
         thermodynamicsTableContent.append([caption, capeLbl, cinhLbl, ecapeLbl, lclLbl, lfcLbl, elLbl, cape3kmLbl])
-
+    else:
+        thermodynamicsTableContent.append(["Effective Inflow", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"])
+    
     thermodynamicsTable = table(ax, bbox=[0, 0, 1, 0.89], cellText=thermodynamicsTableContent, cellLoc="center")
     thermodynamicsTable.auto_set_font_size(False)
 
@@ -389,14 +462,16 @@ def plotDynamics(profileData, ax):
         MWstormRelativeHelicity = mpcalc.storm_relative_helicity(layerForCalc.AGL, layerForCalc.u, layerForCalc.v, bottom=bottom, depth=depth, storm_u=layerForCalc.zeroToSixMean[0], storm_v=layerForCalc.zeroToSixMean[1])[2]
         LMstormRelativeHelicity = mpcalc.storm_relative_helicity(layerForCalc.AGL, layerForCalc.u, layerForCalc.v, bottom=bottom, depth=depth, storm_u=layerForCalc.bunkers_LM[0], storm_v=layerForCalc.bunkers_LM[1])[2]
         thisLayerRow.append(str(int(RMstormRelativeHelicity.magnitude))+"$m^2 s^{-2}$//"+str(int(MWstormRelativeHelicity.magnitude))+"$m^2 s^{-2}$//"+str(int(LMstormRelativeHelicity.magnitude))+"$m^2 s^{-2}$")
-        RMsrwU, RMsrwV = (meanWindu-rm[0]), (meanWindv-rm[1])
-        RMsrwMag, RMsrwDir = mpcalc.wind_speed(RMsrwU, RMsrwV).to(units.kt), mpcalc.wind_direction(RMsrwU, RMsrwV)
-        MWsrwU, MWsrwV = (meanWindu-mw[0]), (meanWindu-mw[1])
-        MWsrwMag, MWsrwDir = mpcalc.wind_speed(MWsrwU, MWsrwV).to(units.kt), mpcalc.wind_direction(MWsrwU, MWsrwV)
-        LMsrwU, LMsrwV = (meanWindu-lm[0]), (meanWindv-lm[1])
-        LMsrwMag, LMsrwDir = mpcalc.wind_speed(LMsrwU, LMsrwV).to(units.kt), mpcalc.wind_direction(LMsrwU, LMsrwV)
-        thisLayerRow.append(f"{int(RMsrwMag.magnitude)}kt/{int(RMsrwDir.magnitude)}°//{int(MWsrwMag.magnitude)}kt/{int(MWsrwDir.magnitude)}°//{int(LMsrwMag.magnitude)}kt/{int(LMsrwDir.magnitude)}°")
-        
+        if not np.isnan(rm[0]):
+            RMsrwU, RMsrwV = (meanWindu-rm[0]), (meanWindv-rm[1])
+            RMsrwMag, RMsrwDir = mpcalc.wind_speed(RMsrwU, RMsrwV).to(units.kt), mpcalc.wind_direction(RMsrwU, RMsrwV)
+            MWsrwU, MWsrwV = (meanWindu-mw[0]), (meanWindu-mw[1])
+            MWsrwMag, MWsrwDir = mpcalc.wind_speed(MWsrwU, MWsrwV).to(units.kt), mpcalc.wind_direction(MWsrwU, MWsrwV)
+            LMsrwU, LMsrwV = (meanWindu-lm[0]), (meanWindv-lm[1])
+            LMsrwMag, LMsrwDir = mpcalc.wind_speed(LMsrwU, LMsrwV).to(units.kt), mpcalc.wind_direction(LMsrwU, LMsrwV)
+            thisLayerRow.append(f"{int(RMsrwMag.magnitude)}kt/{int(RMsrwDir.magnitude)}°//{int(MWsrwMag.magnitude)}kt/{int(MWsrwDir.magnitude)}°//{int(LMsrwMag.magnitude)}kt/{int(LMsrwDir.magnitude)}°")
+        else:
+            thisLayerRow.append("N/A")
         dvdz = mpcalc.first_derivative(layerForCalc.v.data.to(units.meter/units.sec), x=(layerForCalc["AGL"].values*units.meter))
         dvdz = mpcalc.mean_pressure_weighted(layerForCalc.LEVEL, dvdz, height=(layerForCalc["AGL"].values*units.meter), bottom=bottomp, depth=depthp)[0]
         dudz = mpcalc.first_derivative(layerForCalc.u.data.to(units.meter/units.sec), x=(layerForCalc["AGL"].values*units.meter))
@@ -404,19 +479,22 @@ def plotDynamics(profileData, ax):
         
         horizVort = ((-dvdz)**2 + (dudz)**2)**0.5
         
-        rmstreamwiseVort = ((-dvdz * RMsrwU) + (dudz * RMsrwV))/((RMsrwU**2 + RMsrwV**2)**(0.5))
-        rmcrosswiseVort = (horizVort**2 - rmstreamwiseVort**2)**0.5
-        rmstreamwisePercent = (rmstreamwiseVort/(rmstreamwiseVort+rmcrosswiseVort))*100
-        
-        mwstreamwiseVort = ((-dvdz * MWsrwU) + (dudz * MWsrwV))/((MWsrwU**2 + MWsrwV**2)**(0.5))
-        mwcrosswiseVort = (horizVort**2 - mwstreamwiseVort**2)**0.5
-        mwstreamwisePercent = (mwstreamwiseVort/(mwstreamwiseVort+mwcrosswiseVort))*100
+        if not np.isnan(rm[0]):
+            rmstreamwiseVort = ((-dvdz * RMsrwU) + (dudz * RMsrwV))/((RMsrwU**2 + RMsrwV**2)**(0.5))
+            rmcrosswiseVort = (horizVort**2 - rmstreamwiseVort**2)**0.5
+            rmstreamwisePercent = (rmstreamwiseVort/(rmstreamwiseVort+rmcrosswiseVort))*100
+            
+            mwstreamwiseVort = ((-dvdz * MWsrwU) + (dudz * MWsrwV))/((MWsrwU**2 + MWsrwV**2)**(0.5))
+            mwcrosswiseVort = (horizVort**2 - mwstreamwiseVort**2)**0.5
+            mwstreamwisePercent = (mwstreamwiseVort/(mwstreamwiseVort+mwcrosswiseVort))*100
 
-        lmstreamwiseVort = ((-dvdz * LMsrwU) + (dudz * LMsrwV))/((LMsrwU**2 + LMsrwV**2)**(0.5))
-        lmcrosswiseVort = (horizVort**2 - lmstreamwiseVort**2)**0.5
-        lmstreamwisePercent = np.abs(lmstreamwiseVort/(lmstreamwiseVort+lmcrosswiseVort))*100
+            lmstreamwiseVort = ((-dvdz * LMsrwU) + (dudz * LMsrwV))/((LMsrwU**2 + LMsrwV**2)**(0.5))
+            lmcrosswiseVort = (horizVort**2 - lmstreamwiseVort**2)**0.5
+            lmstreamwisePercent = np.abs(lmstreamwiseVort/(lmstreamwiseVort+lmcrosswiseVort))*100
 
-        thisLayerRow.append(str(round(horizVort.magnitude, 3))+"$s^{-1}$//"+str(int(rmstreamwisePercent.magnitude))+"%//"+str(int(mwstreamwisePercent.magnitude))+"%//"+str(int(lmstreamwisePercent.magnitude))+"%")
+            thisLayerRow.append(str(round(horizVort.magnitude, 3))+"$s^{-1}$//"+str(int(rmstreamwisePercent.magnitude))+"%//"+str(int(mwstreamwisePercent.magnitude))+"%//"+str(int(lmstreamwisePercent.magnitude))+"%")
+        else:
+            thisLayerRow.append(str(round(horizVort.magnitude, 3))+"$s^{-1}$//N/A//N/A//N/A")
         dynamicsTableContent.append(thisLayerRow)
     dynamicsTable = table(ax, bbox=[0, 0, 1, 1], cellText=np.empty((8,6), dtype=str), cellLoc="center")
     if profileData.favored_motion == "RM":
@@ -731,10 +809,19 @@ def plotPsblHazType(profileData, ax, precipType):
     if np.isnan(ship):
         ship = 0
     fourToSix = profileData.where(profileData.AGL <= 6000 * units.meter, drop=True).where(profileData.AGL >= 4000 * units.meter, drop=True)
-    fourToSixMW = mpcalc.mean_pressure_weighted(fourToSix.LEVEL, fourToSix.u, fourToSix.v, height=fourToSix.AGL, bottom=fourToSix.LEVEL[0], depth=(fourToSix.LEVEL[0] - fourToSix.LEVEL[-1]))
-    favored = profileData.attrs["bunkers_"+profileData.favored_motion]
-    fourToSixSRWu, fourToSixSRWv = (fourToSixMW[0]-favored[0]), (fourToSixMW[1]-favored[1])
-    fourToSixSRW = mpcalc.wind_speed(fourToSixSRWu, fourToSixSRWv)
+    if profileData.favored_motion is not None:
+        favored = profileData.attrs["bunkers_"+profileData.favored_motion]
+    else:
+        favored = np.array([np.nan, np.nan]) * units.kt
+    if len(fourToSix.LEVEL.data) > 0:
+        fourToSixMW = mpcalc.mean_pressure_weighted(fourToSix.LEVEL, fourToSix.u, fourToSix.v, height=fourToSix.AGL, bottom=fourToSix.LEVEL[0], depth=(fourToSix.LEVEL[0] - fourToSix.LEVEL[-1]))
+        fourToSixSRWu, fourToSixSRWv = (fourToSixMW[0]-favored[0]), (fourToSixMW[1]-favored[1])
+        fourToSixSRW = mpcalc.wind_speed(fourToSixSRWu, fourToSixSRWv)
+    else:
+        fourToSixMW = np.array([np.nan, np.nan]) * units.kt
+        fourToSixSRWu = np.nan * units.kt
+        fourToSixSRWv = np.nan * units.kt
+        fourToSixSRW = np.nan * units.kt
     bulkShear8 = mpcalc.wind_speed(*profileData.sfc_to_eight_shear)
     if profileData.effective_stp >= 3 and profileData.fixed_stp >= 3 and profileData.favored1kmSRH >= 200 * units.meter**2 / units.second**2 and profileData.attrs[profileData.favored_motion+"_SRH"] >= 200 * units.meter**2 / units.second**2 and fourToSixSRW >= 15*units.kt and bulkShear8 > 45 * units.kt and profileData.sbLCL_agl < 1000 * units.meter and profileData.mlLCL_agl < 1200 * units.meter and profileData.sfc_to_one_LR >= 5 *units.delta_degree_Celsius/units.km and profileData.mlCINH > -50*units.joule/units.kilogram and profileData.sbCAPE.to(units.joule/units.kilogram).magnitude == profileData.muCAPE.to(units.joule/units.kilogram).magnitude:
         ax.text(0.5, 0.9, "Possible\nHazard Type:\nPDS TOR", color="magenta", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
@@ -780,7 +867,7 @@ def plotPsblHazType(profileData, ax, precipType):
         if ship >= 0.5 or profileData.scp >= 0.5:
             ax.text(0.5, 0.9, "Possible\nHazard Type:\nMRGL SVR", color="dodgerblue", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
             return
-    if profileData.pwat >= 2 * units.inch and mpcalc.wind_speed(*profileData.corfidi_upshear) <= 25 * units.kt:
+    if profileData.pwat >= 2 * units.inch and mpcalc.wind_speed(*profileData.corfidi_up) <= 25 * units.kt:
         ax.text(0.5, 0.9, "Possible\nHazard Type:\nFLASH FLOOD", color="forestgreen", ha="center", va="top", transform=ax.transAxes, clip_on=False, zorder=5, fontsize=12)
         return
     if mpcalc.wind_speed(profileData.u.data[0], profileData.v.data[0]) > 35 * units.mile/units.hour and "SNOW" in precipType:
@@ -803,7 +890,30 @@ def plotHodograph(profileData, ax):
     [ax.text(i, 0, f"{i} kt", color="gray", clip_on=True, zorder=6) for i in np.arange(-200, 201, 10).astype(int)]
     profileData.u.data = profileData.u.data.to(units.kt)
     profileData.v.data = profileData.v.data.to(units.kt)
-    hodoPlot.plot_colormapped(profileData.u.data.magnitude, profileData.v.data.magnitude, profileData.AGL.data, colors=["fuchsia", "firebrick", "limegreen", "goldenrod", "darkturquoise", "darkturquoise"], intervals=np.array([0, 1, 3, 6, 9, 12, 15])*units.km)
+    intervals = [0]
+    colors = ["fuchsia"]
+    if np.nanmax(profileData.AGL.data) < 1 * units.km:
+        intervals.append(np.nanmax(profileData.AGL.data.to(units.km).magnitude)-.001)
+        intervals.append(np.nanmax(profileData.AGL.data.to(units.km).magnitude))
+        colors.append(["white"])
+    elif np.nanmax(profileData.AGL.data) >= 1 * units.km:
+        intervals.append(1)
+        intervals.append(3)
+        colors.append("firebrick")
+        if np.nanmax(profileData.AGL.data) >= 3 * units.km:
+            intervals.append(6)
+            colors.append("limegreen")
+            if np.nanmax(profileData.AGL.data) >= 6 * units.km:
+                intervals.append(9)
+                colors.append("goldenrod")
+                if np.nanmax(profileData.AGL.data) >= 9 * units.km:
+                    intervals.append(12)
+                    colors.append("darkturquoise")
+                    if np.nanmax(profileData.AGL.data) >= 12 * units.km:
+                        intervals.append(15)
+                        colors.append("darkturquoise")
+    intervals = np.array(intervals)*units.km
+    hodoPlot.plot_colormapped(profileData.u.data.magnitude, profileData.v.data.magnitude, profileData.AGL.data, colors=colors, intervals=intervals)
     maxKm = np.nanmax(profileData.AGL.data.magnitude) // 1000
     kmToLabel = list(np.arange(1, np.min([maxKm+1, 7])))
     ax.scatter(profileData.u.data[0], profileData.v.data[0], color="black", marker="o", s=125, zorder=4)
@@ -939,8 +1049,8 @@ def plotThermalWind(profileData, ax, latitude):
 
 def plotSkewT(profileData, skew, parcelType="sb"):
     # Plot data
-    skew.plot(profileData.LEVEL, profileData.TEMP.data.to(units.degC), "red", zorder=4)
-    skew.plot(profileData.LEVEL, profileData.DWPT.data.to(units.degC), "lime", zorder=5)
+    skew.plot(profileData.LEVEL, profileData.TEMP.data.to(units.degC), "red", zorder=5)
+    skew.plot(profileData.LEVEL, profileData.DWPT.data.to(units.degC), "lime", zorder=4)
     skew.plot(profileData.LEVEL, profileData.virtT.data.to(units.degC), "red", linestyle=":", zorder=4)
     skew.plot(profileData.LEVEL, profileData.wetbulb.data.to(units.degC), "cyan", linewidth=0.5, zorder=3)
     mask = mpcalc.resample_nn_1d(profileData.LEVEL.data.to(units.hPa).magnitude,  np.logspace(4, 2))
@@ -949,7 +1059,6 @@ def plotSkewT(profileData, skew, parcelType="sb"):
     xlimmax = (10*np.nanmax(profileData.TEMP.data.to(units.degC).magnitude) // 10)+10
     if xlimmax - xlimmin < 110:
         xlimmin = xlimmax - 110
-    print(xlimmin, xlimmax)
     skew.ax.set_xlim(xlimmin, xlimmax)
     skew.ax.set_xlabel("Temperature (°C)")
     skew.ax.set_ylabel("Pressure (hPa)")
@@ -958,18 +1067,18 @@ def plotSkewT(profileData, skew, parcelType="sb"):
     skew.ax.tick_params(axis="x", direction="in", pad=-9)
     skew.plot_dry_adiabats(color="gray", linewidths=0.2, zorder=1)
     skew.plot_moist_adiabats(color="gray", linewidths=0.2, zorder=1)
-    skew.ax.vlines([-12, -17], np.nanmin(profileData.LEVEL), np.nanmax(profileData.LEVEL), color="blue", linestyle="--", linewidth=0.5, zorder=1)
+    skew.ax.vlines([-12, -17], 100, np.nanmax(profileData.LEVEL), color="blue", linestyle="--", linewidth=0.5, zorder=1)
 
     skew.ax.text(profileData.wetbulb.data.to(units.degC).magnitude[0], -0.012, f"{int((profileData.wetbulb.data[0]).to(units.degF).magnitude)} °F", color="cyan",  ha="center", va="center", path_effects=[withStroke(linewidth=3, foreground="white")], transform=skew.ax.get_xaxis_transform())
     skew.ax.text(profileData.DWPT.data.to(units.degC).magnitude[0]-5, -0.012, f"{str(int((profileData.DWPT.data[0]).to(units.degF).magnitude))} °F", color="lime",  ha="center", va="center", path_effects=[withStroke(linewidth=3, foreground="white")], transform=skew.ax.get_xaxis_transform(), alpha=0.5)
     skew.ax.text(profileData.TEMP.data.to(units.degC).magnitude[0]+5, -0.012, f"{int((profileData.TEMP.data[0]).to(units.degF).magnitude)} °F", color="red",  ha="center", va="center", path_effects=[withStroke(linewidth=3, foreground="white")], transform=skew.ax.get_xaxis_transform(), alpha=0.5)
 
-    if len(profileData.dcape_levels.data) > 0:
+    if not np.isnan(profileData.dcape_levels.data[0]):
         skew.plot(profileData.dcape_levels, profileData.dcape_profile, "rebeccapurple", linestyle="--", markersize=3, zorder=6)
 
 
     kmToInterp = np.arange(0, 15001, 1000)
-    interpPressures = np.interp(kmToInterp, profileData["AGL"].values, profileData.LEVEL)
+    interpPressures = np.interp(kmToInterp, profileData.AGL, profileData.LEVEL)
     colorsAndKilometers = {
             (0, 1): "fuchsia",
             (1, 3): "firebrick",
@@ -982,6 +1091,9 @@ def plotSkewT(profileData, skew, parcelType="sb"):
         bot, top = indices
         skew.ax.add_patch(Polygon([(0, interpPressures[bot]), (0.01, interpPressures[bot]), (0.01, interpPressures[top]), (0, interpPressures[top])], closed=True, color=color, alpha=0.5, zorder=1, transform=skew.ax.get_yaxis_transform()))
     for i in [0, 1, 2, 3, 4, 5, 6, 9, 12, 15]:
+        if np.nanmax(profileData.AGL.data) < i * units.km:
+            skew.ax.text(0.01, np.nanmin(interpPressures), f"{np.nanmax(profileData.AGL.data).to(units.km).magnitude:.3f} km: {np.nanmin(profileData.LEVEL.data).to(units.hPa).magnitude:.1f} hPa", color="black", transform=skew.ax.get_yaxis_transform())
+            break
         if i == 0:
             skew.ax.text(0.01, interpPressures[i]-5, f"SFC: {interpPressures[i]:.1f} hPa", color="black", transform=skew.ax.get_yaxis_transform())
         else:
@@ -1008,33 +1120,34 @@ def plotSkewT(profileData, skew, parcelType="sb"):
 
     dgzsData = profileData.where(profileData.TEMP <= -12*units.degC, drop=True).where(profileData.TEMP >= -17*units.degC, drop=True)
     
-    listOfDGZs = []
-    dgzBottom = dgzsData.LEVEL.data[0]
-    for i in range(1, len(dgzsData.LEVEL.data)):
-        if dgzsData.LEVEL[i-1] - dgzsData.LEVEL[i] >= 2 * units.hPa:
-            dgzTop = dgzsData.LEVEL.data[i-1]
-            listOfDGZs.append((dgzBottom, dgzTop))
-            dgzBottom = dgzsData.LEVEL.data[i]
-    dgzTop = dgzsData.LEVEL.data[-1]
-    listOfDGZs.append((dgzBottom, dgzTop))
-    for dgz in listOfDGZs:
-        dgzData = profileData.where((profileData.LEVEL <= dgz[0]), drop=True).where((profileData.LEVEL >= dgz[1]), drop=True)
-        skew.shade_area(dgzData.LEVEL.data.to(units.hPa).magnitude, dgzData.TEMP.data.to(units.degC).magnitude, dgzData.DWPT.data.to(units.degC).magnitude, color="blue", alpha=0.2, zorder=6)
-        skew.ax.plot([0, 1], [dgzData.LEVEL[-1].data.to(units.hPa).magnitude, dgzData.LEVEL[-1].data.to(units.hPa).magnitude], color="blue", linewidth=.75, transform=skew.ax.get_yaxis_transform())
-        skew.ax.plot([0, 1], [dgzData.LEVEL[0].data.to(units.hPa).magnitude, dgzData.LEVEL[0].data.to(units.hPa).magnitude], color="blue", linewidth=.75, transform=skew.ax.get_yaxis_transform())
-        
-        dgzData.LEVEL.data.to(units.hPa).mean().magnitude
-        f"Dendritic Growth Zone\n{dgzData.LEVEL[0].data.to(units.hPa):.1f}"
-        f"{dgzData.LEVEL[-1].data.to(units.hPa):.1f}hPa"
-        f"AGL: {int(dgzData.AGL.data[0].to(units.meter).magnitude)}"
-        f"{int(dgzData.AGL.data[-1].to(units.meter).magnitude)}m"
-        f"RH: {int(dgzData.RH.data.mean().magnitude*100)}%"
-        
-        skew.ax.text(0.15, dgzData.LEVEL.data.to(units.hPa).mean().magnitude, f"Dendritic Growth Zone\n{dgzData.LEVEL[0].data.to(units.hPa).magnitude:.1f} - {dgzData.LEVEL[-1].data.to(units.hPa).magnitude:.1f}hPa\nAGL: {int(dgzData.AGL.data[0].to(units.meter).magnitude)} - {int(dgzData.AGL.data[-1].to(units.meter).magnitude)}m\nRH: {int(dgzData.RH.data.mean().magnitude*100)}%", color="blue",  ha="left", va="center", path_effects=[withStroke(linewidth=3, foreground="white")], fontsize=8, clip_on=True, zorder=7, transform=skew.ax.get_yaxis_transform(), alpha=0.7)
+    if len(dgzsData.LEVEL.data) > 0:
+        listOfDGZs = []
+        dgzBottom = dgzsData.LEVEL.data[0]
+        for i in range(1, len(dgzsData.LEVEL.data)):
+            if dgzsData.LEVEL[i-1] - dgzsData.LEVEL[i] >= 2 * units.hPa:
+                dgzTop = dgzsData.LEVEL.data[i-1]
+                listOfDGZs.append((dgzBottom, dgzTop))
+                dgzBottom = dgzsData.LEVEL.data[i]
+        dgzTop = dgzsData.LEVEL.data[-1]
+        listOfDGZs.append((dgzBottom, dgzTop))
+        for dgz in listOfDGZs:
+            dgzData = profileData.where((profileData.LEVEL <= dgz[0]), drop=True).where((profileData.LEVEL >= dgz[1]), drop=True)
+            skew.shade_area(dgzData.LEVEL.data.to(units.hPa).magnitude, dgzData.TEMP.data.to(units.degC).magnitude, dgzData.DWPT.data.to(units.degC).magnitude, color="blue", alpha=0.2, zorder=6)
+            skew.ax.plot([0, 1], [dgzData.LEVEL[-1].data.to(units.hPa).magnitude, dgzData.LEVEL[-1].data.to(units.hPa).magnitude], color="blue", linewidth=.75, transform=skew.ax.get_yaxis_transform())
+            skew.ax.plot([0, 1], [dgzData.LEVEL[0].data.to(units.hPa).magnitude, dgzData.LEVEL[0].data.to(units.hPa).magnitude], color="blue", linewidth=.75, transform=skew.ax.get_yaxis_transform())
+            
+            dgzData.LEVEL.data.to(units.hPa).mean().magnitude
+            f"Dendritic Growth Zone\n{dgzData.LEVEL[0].data.to(units.hPa):.1f}"
+            f"{dgzData.LEVEL[-1].data.to(units.hPa):.1f}hPa"
+            f"AGL: {int(dgzData.AGL.data[0].to(units.meter).magnitude)}"
+            f"{int(dgzData.AGL.data[-1].to(units.meter).magnitude)}m"
+            f"RH: {int(dgzData.RH.data.mean().magnitude*100)}%"
+            
+            skew.ax.text(0.15, dgzData.LEVEL.data.to(units.hPa).mean().magnitude, f"Dendritic Growth Zone\n{dgzData.LEVEL[0].data.to(units.hPa).magnitude:.1f} - {dgzData.LEVEL[-1].data.to(units.hPa).magnitude:.1f}hPa\nAGL: {int(dgzData.AGL.data[0].to(units.meter).magnitude)} - {int(dgzData.AGL.data[-1].to(units.meter).magnitude)}m\nRH: {int(dgzData.RH.data.mean().magnitude*100)}%", color="blue",  ha="left", va="center", path_effects=[withStroke(linewidth=3, foreground="white")], fontsize=8, clip_on=True, zorder=7, transform=skew.ax.get_yaxis_transform(), alpha=0.7)
     
 
 
-def plotSounding(profileData, outputPath, icao, time):
+def plotSounding(profileData, outputPath, icao, time, soundingType="Observed"):
     fig = plt.figure()
     tax = fig.add_axes([1/20, 14/16, 18/20, 1/16])
     if not np.isnan(profileData.LAT) and not np.isnan(profileData.LON):
@@ -1048,11 +1161,11 @@ def plotSounding(profileData, outputPath, icao, time):
         except TypeError:
             groundLat = profileData.LAT
             groundLon = profileData.LON
-        tax.text(0.5, 0.5, f"Observed Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao} ({groundLat.magnitude:.2f}, {groundLon.magnitude:.2f})", ha="center", va="center", transform=tax.transAxes)
+        tax.text(0.5, 0.5, f"{soundingType} Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao} ({groundLat.magnitude:.2f}, {groundLon.magnitude:.2f})", ha="center", va="center", transform=tax.transAxes)
     else:
         groundLat = None
         groundLon = None
-        tax.text(0.5, 0.5, f"Observed Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao}", ha="center", va="center", transform=tax.transAxes)
+        tax.text(0.5, 0.5, f"{soundingType} Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao}", ha="center", va="center", transform=tax.transAxes)
     tax.axis("off")
     skew = plots.SkewT(fig, rect=[1/20, 4/16, 10/20, 10/16])
     plotSkewT(profileData, skew)
@@ -1132,6 +1245,7 @@ def plotSounding(profileData, outputPath, icao, time):
     mapAx.set_position([16*width_unit, 7*height_unit, 3*width_unit, 2*height_unit])
     Path(path.dirname(outputPath)).mkdir(parents=True, exist_ok=True)
     fig.savefig(outputPath)
+    plt.close(fig)
 
 
 def readACARS(acarsDatasetPath):
@@ -1144,18 +1258,30 @@ def readACARS(acarsDatasetPath):
         saveFilePath = path.join(sys.argv[2], thisSoundingICAO, thisSoundingTime.strftime("%Y"), thisSoundingTime.strftime("%m"), thisSoundingTime.strftime("%d"), thisSoundingTime.strftime("%H%M.png"))
         if path.exists(saveFilePath):
             continue
-        latestMetar = requests.get(f"https://www.aviationweather.gov/metar/data?ids={thisSoundingICAO}&format=raw&taf=off").content.decode("utf-8")
-        if "No METAR found for" in latestMetar:
+        metarsRaw = requests.get(f"https://www.aviationweather.gov/metar/data?ids={thisSoundingICAO}&format=raw&hours=12&taf=off&layout=on").content.decode("utf-8").split(">\n<code>")
+        if "No METAR found for" in metarsRaw:
             continue
-        latestMetar = parse_metar_to_dataframe(latestMetar[latestMetar.find("<code>")+6:latestMetar.find("</code>")])
-        altitudes = [latestMetar["elevation"].values[0] * units("m")]
-        temperatures = [latestMetar["air_temperature"].values[0] * units("degC")]
-        dewpoints = [latestMetar["dew_point_temperature"].values[0] * units("degC")]
-        windDirection = [latestMetar["wind_direction"].values[0] * units.deg]
-        windSpeed = [latestMetar["wind_speed"].values[0] * units("kt")]
-        airportBarometer = mpcalc.altimeter_to_station_pressure(latestMetar["altimeter"].values[0] * units("inHg"), latestMetar["elevation"].values[0] * units("m")).to("hPa")
+        allMetars = None
+        for metar in metarsRaw:
+            metarStr = metar.replace("</code><br/", "").split(">\n<")[0]
+            if metarStr.startswith(thisSoundingICAO):
+                metar = parse_metar_to_dataframe(metarStr)
+                if allMetars is None:
+                    allMetars = metar
+                else:
+                    allMetars = pd.concat([allMetars, metar])
+        if allMetars is None:
+            continue
+        allMetars["timedelta"] = allMetars["date_time"].apply(lambda x: abs((x - thisSoundingTime).total_seconds()))
+        closestMetar = allMetars.sort_values("timedelta").sort_values("timedelta").iloc[0]
+        altitudes = [closestMetar["elevation"] * units("m")]
+        temperatures = [closestMetar["air_temperature"] * units("degC")]
+        dewpoints = [closestMetar["dew_point_temperature"] * units("degC")]
+        windDirection = [closestMetar["wind_direction"] * units.deg]
+        windSpeed = [closestMetar["wind_speed"] * units("kt")]
+        airportBarometer = mpcalc.altimeter_to_station_pressure(closestMetar["altimeter"] * units("inHg"), closestMetar["elevation"] * units("m")).to("hPa")
         pressure = [airportBarometer]
-        virtTemp = [mpcalc.virtual_temperature(latestMetar["air_temperature"].values[0] * units("degC"), mpcalc.mixing_ratio_from_specific_humidity(mpcalc.specific_humidity_from_dewpoint(airportBarometer, latestMetar["dew_point_temperature"].values[0] * units("degC"))))]
+        virtTemp = [mpcalc.virtual_temperature(closestMetar["air_temperature"] * units("degC"), mpcalc.mixing_ratio_from_specific_humidity(mpcalc.specific_humidity_from_dewpoint(airportBarometer, closestMetar["dew_point_temperature"] * units("degC"))))]
         for ii in range(0, len(thisSounding.altitude)):
             if np.isnan(thisSounding.altitude.data[ii]) or np.isnan(thisSounding.temperature.data[ii]):# or np.isnan(thisSounding.dewpoint.data[ii]) or np.isnan(thisSounding.windDir.data[ii]) or np.isnan(thisSounding.windSpeed.data[ii]):
                 continue
@@ -1189,8 +1315,8 @@ def readACARS(acarsDatasetPath):
         soundingDataFrame = pd.DataFrame({"LEVEL": pressure, "HGHT": altitudes, "TEMP": temperatures, "DWPT": dewpoints, "WDIR": windDirection, "WSPD": windSpeed}).sort_values("LEVEL", ascending=False)
         data = makeSoundingDataset(soundingDataFrame, thisSoundingICAO, thisSoundingTime)
         saveFilePath = path.join(sys.argv[2], thisSoundingICAO, thisSoundingTime.strftime("%Y"), thisSoundingTime.strftime("%m"), thisSoundingTime.strftime("%d"), thisSoundingTime.strftime("%H%M.png"))
-        plotSounding(data, saveFilePath, thisSoundingICAO, thisSoundingTime)
-
+        print(thisSoundingICAO, thisSoundingTime)
+        plotSounding(data, saveFilePath, thisSoundingICAO, thisSoundingTime, soundingType="ACARS")
 
 def readSharppy(fileName):
     from io import StringIO
@@ -1227,7 +1353,7 @@ if __name__ == "__main__":
         print("Input file does not exist!")
         exit()
     if sys.argv[1].endswith("acars.nc"):
-        profileData, icao, datetime = readACARS(sys.argv[1])
+        readACARS(sys.argv[1])
     else:
         profileData, icao, datetime  = readSharppy(sys.argv[1])
         plotSounding(profileData, sys.argv[2], icao, datetime)
