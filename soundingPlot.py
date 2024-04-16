@@ -79,6 +79,8 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     soundingDS["virtT"] = mpcalc.virtual_temperature_from_dewpoint(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     soundingDS["RH"] = mpcalc.relative_humidity_from_dewpoint(soundingDS.TEMP, soundingDS.DWPT)
     soundingDS["wetbulb"] = mpcalc.wet_bulb_temperature(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+    soundingDS["potential_temperature"] = mpcalc.potential_temperature(soundingDS.LEVEL, soundingDS.TEMP)
+    soundingDS["equivalent_potential_temperature"] = mpcalc.equivalent_potential_temperature(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     # Calculate effective inflow layer
     inflowBottom = np.nan
     inflowTop = np.nan
@@ -110,8 +112,8 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
 
     # Calculate parcel paths, LCLs, LFCs, ELs, CAPE, CINH
     # surface-based
-    sbParcelPath = mpcalc.parcel_profile(soundingDS.LEVEL, soundingDS.TEMP[0], soundingDS.DWPT[0]).data
-    soundingDS["sbParcelPath"] = sbParcelPath.to(units.degC)
+    sbParcelPath = mpcalc.parcel_profile(soundingDS.LEVEL, soundingDS.TEMP[0], soundingDS.DWPT[0])
+    soundingDS["sbParcelPath"] = sbParcelPath
     soundingDS.attrs["sbLCL"] = mpcalc.lcl(soundingDS.LEVEL[0], soundingDS.virtT[0], soundingDS.DWPT[0])[0]
     soundingDS.attrs["sbLFC"] = mpcalc.lfc(soundingDS.LEVEL, soundingDS.virtT, soundingDS.DWPT, parcel_temperature_profile=sbParcelPath)[0]
     soundingDS.attrs["sbEL"] = mpcalc.el(soundingDS.LEVEL, soundingDS.virtT, soundingDS.DWPT, parcel_temperature_profile=sbParcelPath)[0]
@@ -121,61 +123,51 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     initPressure, initTemp, initDewpoint, initIdx = mpcalc.most_unstable_parcel(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     soundingDS.attrs["mu_initPressure"], soundingDS.attrs["mu_initTemp"], soundingDS.attrs["mu_initDewpoint"] = initPressure, initTemp, initDewpoint
     initVirtT = mpcalc.virtual_temperature_from_dewpoint(initPressure, initTemp, initDewpoint)
-    muParcelPath = np.empty(soundingDS.LEVEL.data.shape)
-    muParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initTemp, initDewpoint).data.to(units.degK).magnitude
-    muParcelPath[:initIdx] = np.nan
-    muParcelPath = muParcelPath * units.degK
-    soundingDS["muParcelPath"] = muParcelPath.to(units.degC)
+    muParcelPath = xr.full_like(soundingDS.TEMP, np.nan * units.K)
+    muParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initTemp, initDewpoint)
+    soundingDS["muParcelPath"] = muParcelPath
     soundingDS.attrs["muLCL"] = mpcalc.lcl(initPressure, initTemp, initDewpoint)[0]
     soundingDS.attrs["muLFC"] = mpcalc.lfc(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=muParcelPath[initIdx:])[0]
     soundingDS.attrs["muEL"] = mpcalc.el(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=muParcelPath[initIdx:])[0]
     soundingDS.attrs["muCAPE"], soundingDS.attrs["muCINH"] = mpcalc.most_unstable_cape_cin(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     
     # 100-hPa mixed layer
-    mlParcelPath = np.empty(soundingDS.LEVEL.data.shape)
+    mlParcelPath = xr.full_like(soundingDS.TEMP, np.nan * units.K)
     if np.nanmax(soundingDS.LEVEL.data) - np.nanmin(soundingDS.LEVEL.data) > 100 * units.hPa:
         initPressure, initTemp, initDewpoint = mpcalc.mixed_parcel(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
-        initIdx = len(soundingDS.where(soundingDS.LEVEL >= initPressure, drop=True).LEVEL.data)
+        initIdx = len(soundingDS.where(soundingDS.LEVEL > initPressure, drop=True).LEVEL.data)
         initVirtT = mpcalc.virtual_temperature_from_dewpoint(initPressure, initTemp, initDewpoint)
         mlParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initVirtT, initDewpoint)
-        mlParcelPath[:initIdx] = np.nan
-        mlParcelPath = mlParcelPath * units.degK
-        soundingDS["mlParcelPath"] = mlParcelPath.to(units.degC)
         soundingDS.attrs["mlLCL"] = mpcalc.lcl(initPressure, initVirtT, initDewpoint)[0]
         soundingDS.attrs["mlLFC"] = mpcalc.lfc(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=mlParcelPath[initIdx:])[0]
         soundingDS.attrs["mlEL"] = mpcalc.el(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=mlParcelPath[initIdx:])[0]
         soundingDS.attrs["mlCAPE"], soundingDS.attrs["mlCINH"] = mpcalc.mixed_layer_cape_cin(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     else:
-        mlParcelPath[:] = np.nan
-        mlParcelPath = mlParcelPath * units.degK
-        soundingDS["mlParcelPath"] = mlParcelPath.to(units.degC)
         soundingDS.attrs["mlLCL"] = np.nan * units.hPa
         soundingDS.attrs["mlLFC"] = np.nan * units.hPa
         soundingDS.attrs["mlEL"] = np.nan * units.hPa
         soundingDS.attrs["mlCAPE"] = np.nan * units.joule/units.kilogram
         soundingDS.attrs["mlCINH"] = np.nan * units.joule/units.kilogram
+    soundingDS["mlParcelPath"] = mlParcelPath
 
     # effective inflow layer
-    inflowParcelPath = np.empty(soundingDS.LEVEL.data.shape)
+    inflowParcelPath = xr.full_like(soundingDS.TEMP, np.nan * units.K)
     if not np.isnan(inflowBottom):
         initPressure, initTemp, initDewpoint = mpcalc.mixed_parcel(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT, parcel_start_pressure=inflowBottom, depth=(inflowBottom - inflowTop))
-        initIdx = soundingDS.where(soundingDS.LEVEL >= initPressure, drop=True).index.data[0]
+        initIdx = len(soundingDS.where(soundingDS.LEVEL > initPressure, drop=True).LEVEL.data)
         initVirtT = mpcalc.virtual_temperature_from_dewpoint(initPressure, initTemp, initDewpoint)
-        inflowParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], soundingDS.TEMP[initIdx], soundingDS.DWPT[initIdx]).data.to(units.degK).magnitude
-        inflowParcelPath[:initIdx] = np.nan
-        inflowParcelPath = inflowParcelPath * units.degK
+        inflowParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], soundingDS.TEMP[initIdx], soundingDS.DWPT[initIdx])
         soundingDS.attrs["inLCL"] = mpcalc.lcl(initPressure, initVirtT, initDewpoint)[0]
         soundingDS.attrs["inLFC"] = mpcalc.lfc(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=inflowParcelPath[initIdx:])[0]
         soundingDS.attrs["inEL"] = mpcalc.el(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=inflowParcelPath[initIdx:])[0]
         soundingDS.attrs["inCAPE"], soundingDS.attrs["inCINH"] = mpcalc.mixed_layer_cape_cin(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT, parcel_start_pressure=inflowBottom, depth=(inflowBottom - inflowTop))
     else:
-        inflowParcelPath[:] = np.nan
         inflowParcelPath = inflowParcelPath * units.degK
         soundingDS.attrs["inLCL"] = np.nan * units.hPa
         soundingDS.attrs["inLFC"] = np.nan * units.hPa
         soundingDS.attrs["inEL"] = np.nan * units.hPa
         soundingDS.attrs["inCAPE"], soundingDS.attrs["inCINH"] = np.nan * units.joule/units.kilogram, np.nan * units.joule/units.kilogram
-    soundingDS["inParcelPath"] = inflowParcelPath.to(units.degC)
+    soundingDS["inParcelPath"] = inflowParcelPath
     # Cloud Layer heights
     soundingDS.attrs["cloudLayerBottom"] = soundingDS.attrs[selectedParcel+"LCL"]
     soundingDS.attrs["cloudLayerTop"] = soundingDS.attrs[selectedParcel+"EL"]
@@ -274,15 +266,16 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
         print(e)
         soundingDS.attrs["convT"] = np.nan * units.degC
     # DCAPE
+    dcape_profile = xr.full_like(soundingDS.TEMP, np.nan)
     if np.nanmax(soundingDS.LEVEL.data) > 700 * units.hPa and np.nanmin(soundingDS.LEVEL.data) < 500 * units.hPa:
-        soundingDS.attrs["dcape"], soundingDS["dcape_levels"], soundingDS.attrs["dcape_profile"]  = mpcalc.down_cape(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+        dcape_result  = mpcalc.down_cape(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+        dcape_quantity = dcape_result[0]
+        dcape_profile[:len(dcape_result[2])] = dcape_result[2]
     else:
-        soundingDS.attrs["dcape"] = 0 * units.joule/units.kilogram
-        dcapeLevels = np.empty(soundingDS.LEVEL.data.shape)
-        dcapeLevels[:] = np.nan
-        soundingDS["dcape_levels"] = dcapeLevels
-        soundingDS.attrs["dcape_profile"] = [np.nan * units.degC]
-
+        dcape_quantity = np.nan * units.joule/units.kilogram
+    soundingDS.attrs["dcape"] = dcape_quantity
+    soundingDS["dcape_profile"] = dcape_profile
+    soundingDS = soundingDS.drop('index')
     return soundingDS
     
 
