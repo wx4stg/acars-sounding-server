@@ -21,8 +21,15 @@ from cartopy import crs as ccrs
 from cartopy import feature as cfeat
 
 import holoviews as hv
+import panel as pn
+
 hv.extension('bokeh')
 
+
+def calc_skew_t_offset(pressure, skew_angle):
+    P_bottom = np.max(pressure)
+    temp_offset = np.log10(P_bottom/pressure)/(np.tan(np.deg2rad(skew_angle))) * units.delta_degC
+    return 37*temp_offset
 
 
 def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
@@ -78,6 +85,9 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     soundingDS["virtT"] = mpcalc.virtual_temperature_from_dewpoint(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     soundingDS["RH"] = mpcalc.relative_humidity_from_dewpoint(soundingDS.TEMP, soundingDS.DWPT)
     soundingDS["wetbulb"] = mpcalc.wet_bulb_temperature(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+    soundingDS["potential_temperature"] = mpcalc.potential_temperature(soundingDS.LEVEL, soundingDS.TEMP)
+    soundingDS["equivalent_potential_temperature"] = mpcalc.equivalent_potential_temperature(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+    soundingDS["skewt_offset"] = calc_skew_t_offset(soundingDS.LEVEL, 30)
     # Calculate effective inflow layer
     inflowBottom = np.nan
     inflowTop = np.nan
@@ -109,8 +119,8 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
 
     # Calculate parcel paths, LCLs, LFCs, ELs, CAPE, CINH
     # surface-based
-    sbParcelPath = mpcalc.parcel_profile(soundingDS.LEVEL, soundingDS.TEMP[0], soundingDS.DWPT[0]).data
-    soundingDS["sbParcelPath"] = sbParcelPath.to(units.degC)
+    sbParcelPath = mpcalc.parcel_profile(soundingDS.LEVEL, soundingDS.TEMP[0], soundingDS.DWPT[0])
+    soundingDS["sbParcelPath"] = sbParcelPath
     soundingDS.attrs["sbLCL"] = mpcalc.lcl(soundingDS.LEVEL[0], soundingDS.virtT[0], soundingDS.DWPT[0])[0]
     soundingDS.attrs["sbLFC"] = mpcalc.lfc(soundingDS.LEVEL, soundingDS.virtT, soundingDS.DWPT, parcel_temperature_profile=sbParcelPath)[0]
     soundingDS.attrs["sbEL"] = mpcalc.el(soundingDS.LEVEL, soundingDS.virtT, soundingDS.DWPT, parcel_temperature_profile=sbParcelPath)[0]
@@ -120,61 +130,51 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     initPressure, initTemp, initDewpoint, initIdx = mpcalc.most_unstable_parcel(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     soundingDS.attrs["mu_initPressure"], soundingDS.attrs["mu_initTemp"], soundingDS.attrs["mu_initDewpoint"] = initPressure, initTemp, initDewpoint
     initVirtT = mpcalc.virtual_temperature_from_dewpoint(initPressure, initTemp, initDewpoint)
-    muParcelPath = np.empty(soundingDS.LEVEL.data.shape)
-    muParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initTemp, initDewpoint).data.to(units.degK).magnitude
-    muParcelPath[:initIdx] = np.nan
-    muParcelPath = muParcelPath * units.degK
-    soundingDS["muParcelPath"] = muParcelPath.to(units.degC)
+    muParcelPath = xr.full_like(soundingDS.TEMP, np.nan * units.degK)
+    muParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initTemp, initDewpoint)
+    soundingDS["muParcelPath"] = muParcelPath
     soundingDS.attrs["muLCL"] = mpcalc.lcl(initPressure, initTemp, initDewpoint)[0]
     soundingDS.attrs["muLFC"] = mpcalc.lfc(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=muParcelPath[initIdx:])[0]
     soundingDS.attrs["muEL"] = mpcalc.el(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=muParcelPath[initIdx:])[0]
     soundingDS.attrs["muCAPE"], soundingDS.attrs["muCINH"] = mpcalc.most_unstable_cape_cin(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     
     # 100-hPa mixed layer
-    mlParcelPath = np.empty(soundingDS.LEVEL.data.shape)
+    mlParcelPath = xr.full_like(soundingDS.TEMP, np.nan * units.degK)
     if np.nanmax(soundingDS.LEVEL.data) - np.nanmin(soundingDS.LEVEL.data) > 100 * units.hPa:
         initPressure, initTemp, initDewpoint = mpcalc.mixed_parcel(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
-        initIdx = len(soundingDS.where(soundingDS.LEVEL >= initPressure, drop=True).LEVEL.data)
+        initIdx = len(soundingDS.where(soundingDS.LEVEL > initPressure, drop=True).LEVEL.data)
         initVirtT = mpcalc.virtual_temperature_from_dewpoint(initPressure, initTemp, initDewpoint)
         mlParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], initVirtT, initDewpoint)
-        mlParcelPath[:initIdx] = np.nan
-        mlParcelPath = mlParcelPath * units.degK
-        soundingDS["mlParcelPath"] = mlParcelPath.to(units.degC)
         soundingDS.attrs["mlLCL"] = mpcalc.lcl(initPressure, initVirtT, initDewpoint)[0]
         soundingDS.attrs["mlLFC"] = mpcalc.lfc(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=mlParcelPath[initIdx:])[0]
         soundingDS.attrs["mlEL"] = mpcalc.el(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=mlParcelPath[initIdx:])[0]
         soundingDS.attrs["mlCAPE"], soundingDS.attrs["mlCINH"] = mpcalc.mixed_layer_cape_cin(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
     else:
-        mlParcelPath[:] = np.nan
-        mlParcelPath = mlParcelPath * units.degK
-        soundingDS["mlParcelPath"] = mlParcelPath.to(units.degC)
         soundingDS.attrs["mlLCL"] = np.nan * units.hPa
         soundingDS.attrs["mlLFC"] = np.nan * units.hPa
         soundingDS.attrs["mlEL"] = np.nan * units.hPa
         soundingDS.attrs["mlCAPE"] = np.nan * units.joule/units.kilogram
         soundingDS.attrs["mlCINH"] = np.nan * units.joule/units.kilogram
+    soundingDS["mlParcelPath"] = mlParcelPath
 
     # effective inflow layer
-    inflowParcelPath = np.empty(soundingDS.LEVEL.data.shape)
+    inflowParcelPath = xr.full_like(soundingDS.TEMP, np.nan * units.degK)
     if not np.isnan(inflowBottom):
         initPressure, initTemp, initDewpoint = mpcalc.mixed_parcel(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT, parcel_start_pressure=inflowBottom, depth=(inflowBottom - inflowTop))
-        initIdx = soundingDS.where(soundingDS.LEVEL >= initPressure, drop=True).index.data[0]
+        initIdx = len(soundingDS.where(soundingDS.LEVEL > initPressure, drop=True).LEVEL.data)
         initVirtT = mpcalc.virtual_temperature_from_dewpoint(initPressure, initTemp, initDewpoint)
-        inflowParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], soundingDS.TEMP[initIdx], soundingDS.DWPT[initIdx]).data.to(units.degK).magnitude
-        inflowParcelPath[:initIdx] = np.nan
-        inflowParcelPath = inflowParcelPath * units.degK
+        inflowParcelPath[initIdx:] = mpcalc.parcel_profile(soundingDS.LEVEL[initIdx:], soundingDS.TEMP[initIdx], soundingDS.DWPT[initIdx])
         soundingDS.attrs["inLCL"] = mpcalc.lcl(initPressure, initVirtT, initDewpoint)[0]
         soundingDS.attrs["inLFC"] = mpcalc.lfc(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=inflowParcelPath[initIdx:])[0]
         soundingDS.attrs["inEL"] = mpcalc.el(soundingDS.LEVEL[initIdx:], soundingDS.virtT[initIdx:], soundingDS.DWPT[initIdx:], parcel_temperature_profile=inflowParcelPath[initIdx:])[0]
         soundingDS.attrs["inCAPE"], soundingDS.attrs["inCINH"] = mpcalc.mixed_layer_cape_cin(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT, parcel_start_pressure=inflowBottom, depth=(inflowBottom - inflowTop))
     else:
-        inflowParcelPath[:] = np.nan
         inflowParcelPath = inflowParcelPath * units.degK
         soundingDS.attrs["inLCL"] = np.nan * units.hPa
         soundingDS.attrs["inLFC"] = np.nan * units.hPa
         soundingDS.attrs["inEL"] = np.nan * units.hPa
         soundingDS.attrs["inCAPE"], soundingDS.attrs["inCINH"] = np.nan * units.joule/units.kilogram, np.nan * units.joule/units.kilogram
-    soundingDS["inParcelPath"] = inflowParcelPath.to(units.degC)
+    soundingDS["inParcelPath"] = inflowParcelPath
     # Cloud Layer heights
     soundingDS.attrs["cloudLayerBottom"] = soundingDS.attrs[selectedParcel+"LCL"]
     soundingDS.attrs["cloudLayerTop"] = soundingDS.attrs[selectedParcel+"EL"]
@@ -273,15 +273,16 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
         print(e)
         soundingDS.attrs["convT"] = np.nan * units.degC
     # DCAPE
+    dcape_profile = xr.full_like(soundingDS.TEMP, np.nan * units.degC)
     if np.nanmax(soundingDS.LEVEL.data) > 700 * units.hPa and np.nanmin(soundingDS.LEVEL.data) < 500 * units.hPa:
-        soundingDS.attrs["dcape"], soundingDS["dcape_levels"], soundingDS.attrs["dcape_profile"]  = mpcalc.down_cape(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+        dcape_result  = mpcalc.down_cape(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+        dcape_quantity = dcape_result[0]
+        dcape_profile[:len(dcape_result[2])] = dcape_result[2]
     else:
-        soundingDS.attrs["dcape"] = 0 * units.joule/units.kilogram
-        dcapeLevels = np.empty(soundingDS.LEVEL.data.shape)
-        dcapeLevels[:] = np.nan
-        soundingDS["dcape_levels"] = dcapeLevels
-        soundingDS.attrs["dcape_profile"] = [np.nan * units.degC]
-
+        dcape_quantity = np.nan * units.joule/units.kilogram
+    soundingDS.attrs["dcape"] = dcape_quantity
+    soundingDS["dcape_profile"] = dcape_profile
+    soundingDS = soundingDS.drop('index')
     return soundingDS
     
 
@@ -381,6 +382,104 @@ def readSharppy(fileName):
     data = data.loc[data["LEVEL"] >= 10]
     data = makeSoundingDataset(data, where, when)
     return data, where, when
+
+
+def plotSounding(profileData, outputPath, icao, time, soundingType="Observed"):
+    title_text = ''
+    if not np.isnan(profileData.LAT) and not np.isnan(profileData.LON):
+        try:
+            if len(profileData.LAT) == 1:
+                groundLat = profileData.LAT
+                groundLon = profileData.LON
+            else:
+                groundLat = profileData.LAT[0]
+                groundLon = profileData.LON[0]
+        except TypeError:
+            groundLat = profileData.LAT
+            groundLon = profileData.LON
+        title_text = f"{soundingType} Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao} ({groundLat.magnitude:.2f}, {groundLon.magnitude:.2f})"
+    else:
+        groundLat = None
+        groundLon = None
+        title_text = f"{soundingType} Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao}"
+    tax = pn.pane.Markdown(title_text, styles={'text-align': 'center'})
+    skew = plotSkewT(profileData)
+    # thermalWindAx.set_yscale("log")
+    # thermalWindAx.set_ylim(skew.ax.get_ylim())
+    # if groundLat is not None:
+    #     thermalWindAx.text(0.5, 0.95, "Thermal Wind\nRel. Humidity", ha="center", va="center", fontsize=9, transform=thermalWindAx.transAxes)
+    # else:
+    #     thermalWindAx.text(0.5, 0.95, "Rel. Humidity", ha="center", va="center", fontsize=9, transform=thermalWindAx.transAxes)
+    # plotThermalWind(profileData, thermalWindAx, groundLat)
+    # thermalWindAx.patch.set_alpha(0)
+    
+    # hodoAx = fig.add_axes([12/20, 9/16, 7/20, 5/16])
+    # plotHodograph(profileData, hodoAx)
+    # hodoAx.patch.set_alpha(0)
+    
+    # partialThicknessAx = fig.add_axes([14/20, 7/16, 2/20, 2/16])
+    # precipType = plotPartialThickness(profileData, partialThicknessAx)
+    
+    # psblHazTypeAx = fig.add_axes([12/20, 7/16, 2/20, 2/16])
+    # psblHazTypeAx.tick_params(axis="both", which="both", bottom=False, top=False, labelbottom=False, right=False, left=False, labelleft=False)
+    # plotPsblHazType(profileData, psblHazTypeAx, precipType)
+
+
+
+    # mapAx = fig.add_axes([16/20, 7/16, 3/20, 2/16], projection=ccrs.PlateCarree())
+    # if groundLat is not None and groundLon is not None:
+    #     mapAx.scatter(groundLon, groundLat, transform=ccrs.PlateCarree(), color="black", marker="*")
+    #     mapAx.add_feature(cfeat.STATES.with_scale("50m"))
+    #     mapAx.add_feature(plots.USCOUNTIES.with_scale("5m"), edgecolor="gray", linewidth=0.25)
+    # else:
+    #     mapAx.text(0.5, 0.5, "Location not available", ha="center", va="center", path_effects=[withStroke(linewidth=3, foreground="white")], transform=mapAx.transAxes)
+    # mapAx.add_feature(cfeat.COASTLINE.with_scale("50m"))
+    
+    # thermodynamicsAx = fig.add_axes([1/20, 1/16, 9/20, 3/16])
+    # thermodynamicsAx.tick_params(axis="both", which="both", bottom=False, top=False, labelbottom=False, right=False, left=False, labelleft=False)
+    # thermodynamicsAx.spines[['right']].set_visible(False)
+    # plotThermoynamics(profileData, thermodynamicsAx)
+    # thermodynamicsAx.patch.set_alpha(0)
+
+    # paramsAx = fig.add_axes([10/20, 1/16, 2/20, 3/16])
+    # paramsAx.tick_params(axis="both", which="both", bottom=False, top=False, labelbottom=False, right=False, left=False, labelleft=False)
+    # plotParams(profileData, paramsAx)
+    # paramsAx.patch.set_alpha(0)
+
+    # dynamicsAx = fig.add_axes([12/20, 1/16, 7/20, 6/16])
+    # dynamicsAx.tick_params(axis="both", which="both", bottom=False, top=False, labelbottom=False, right=False, left=False, labelleft=False)
+    # plotDynamics(profileData, dynamicsAx)
+
+    # px = 1/plt.rcParams["figure.dpi"]
+    # fig.set_size_inches(1920*px, 1080*px)
+    # width_unit = skew.ax.get_position().width / 10
+    # height_unit = skew.ax.get_position().height / 10
+    # tax.set_position([1*width_unit, 14*height_unit, 18*width_unit, 1*height_unit])
+    # skew.ax.set_position([1*width_unit, 4*height_unit, 10*width_unit, 10*height_unit])
+    # thermalWindAx.set_position([11*width_unit, 4*height_unit, width_unit, 10*height_unit])
+    # oldHodoLimits = hodoAx.get_xlim(), hodoAx.get_ylim()
+    # hodoAx.set_adjustable("datalim")
+    # hodoAx.set_position([12*width_unit, 9*height_unit, 7*width_unit, 5*height_unit])
+    # hodoaspect = (hodoAx.get_position().height*1080)/(hodoAx.get_position().width*1920)
+    # altxmax = ((oldHodoLimits[1][1] - oldHodoLimits[1][0])/hodoaspect)+oldHodoLimits[0][0]
+    # altymax = ((oldHodoLimits[0][1] - oldHodoLimits[0][0])*hodoaspect)+oldHodoLimits[1][0]
+    # hodoAx.set_xlim(oldHodoLimits[0][0], np.nanmax([altxmax, oldHodoLimits[0][1]]))
+    # hodoAx.set_ylim(oldHodoLimits[1][0], np.nanmax([altymax, oldHodoLimits[1][1]]))
+
+    # psblHazTypeAx.set_position([12*width_unit, 7*height_unit, 2*width_unit, 2*height_unit])
+    # partialThicknessAx.set_position([14*width_unit, 7*height_unit, 2*width_unit, 2*height_unit])
+
+    # thermodynamicsAx.set_position([1*width_unit, 1*height_unit, 9*width_unit, 3*height_unit])
+    # paramsAx.set_position([10*width_unit, 1*height_unit, 2*width_unit, 3*height_unit])
+    # dynamicsAx.set_position([12*width_unit, 1*height_unit, 7*width_unit, 6*height_unit])
+
+    # mapAx.set_adjustable("datalim")
+    # mapAx.set_position([16*width_unit, 7*height_unit, 3*width_unit, 2*height_unit])
+    # Path(path.dirname(outputPath)).mkdir(parents=True, exist_ok=True)
+    fig = pn.Column(tax, pn.Row(pn.Column(skew)))
+    fig.servable()
+
+
 
 if __name__ == "__main__":
     import sys
