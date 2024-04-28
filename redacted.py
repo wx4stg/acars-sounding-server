@@ -27,6 +27,7 @@ hv.extension('bokeh')
 
 
 def calc_skew_t_offset(pressure, skew_angle):
+    pressure = pressure.data.to(units.hPa).magnitude
     P_bottom = np.max(pressure)
     temp_offset = np.log10(P_bottom/pressure)/(np.tan(np.deg2rad(skew_angle))) * units.delta_degC
     return 37*temp_offset
@@ -184,7 +185,10 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     # storm motion
     if np.nanmax(soundingDS.AGL.data) > 6000 * units.meter:
         soundingDS.attrs["bunkers_RM"], soundingDS.attrs["bunkers_LM"], soundingDS.attrs["zeroToSixMean"] = mpcalc.bunkers_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
-        soundingDS.attrs["corfidi_up"], soundingDS.attrs["corfidi_down"] = mpcalc.corfidi_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
+        lowest1500_index = np.argmin(soundingDS.AGL <= units.Quantity(1500, 'meter'))
+        llj_index = np.argmax(soundingDS.WSPD[:lowest1500_index])
+        llj_u, llj_v = soundingDS.u[llj_index], soundingDS.v[llj_index]
+        soundingDS.attrs["corfidi_up"], soundingDS.attrs["corfidi_down"] = mpcalc.corfidi_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, u_llj=llj_u, v_llj=llj_v)
         # SRH
         soundingDS.attrs["RM_SRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=3000*units.meter, storm_u=soundingDS.bunkers_RM[0], storm_v=soundingDS.bunkers_RM[1])[2]
         soundingDS.attrs["MW_SRH"] = mpcalc.storm_relative_helicity(soundingDS.AGL, soundingDS.u, soundingDS.v, bottom=0*units.meter, depth=3000*units.meter, storm_u=soundingDS.zeroToSixMean[0], storm_v=soundingDS.zeroToSixMean[1])[2]
@@ -275,7 +279,7 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     # DCAPE
     dcape_profile = xr.full_like(soundingDS.TEMP, np.nan * units.degC)
     if np.nanmax(soundingDS.LEVEL.data) > 700 * units.hPa and np.nanmin(soundingDS.LEVEL.data) < 500 * units.hPa:
-        dcape_result  = mpcalc.down_cape(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
+        dcape_result  = mpcalc.downdraft_cape(soundingDS.LEVEL, soundingDS.TEMP, soundingDS.DWPT)
         dcape_quantity = dcape_result[0]
         dcape_profile[:len(dcape_result[2])] = dcape_result[2]
     else:
