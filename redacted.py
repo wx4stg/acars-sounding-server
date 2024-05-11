@@ -27,10 +27,15 @@ hv.extension('bokeh')
 
 
 def calc_skew_t_offset(pressure, skew_angle):
-    pressure = pressure.data.to(units.hPa).magnitude
-    P_bottom = np.max(pressure)
-    temp_offset = np.log10(P_bottom/pressure)/(np.tan(np.deg2rad(skew_angle))) * units.delta_degC
-    return 37*temp_offset
+    pressure_data = pressure.data.to(units.hPa).magnitude
+    P_bottom = np.max(pressure_data)
+    temp_offset = 37*np.log10(P_bottom/pressure_data)/(np.tan(np.deg2rad(skew_angle))) * units.delta_degC
+    temp_offset = xr.DataArray(
+        temp_offset,
+        dims=("LEVEL_unitless"),
+        coords={"LEVEL_unitless": pressure.LEVEL_unitless}
+    )
+    return temp_offset
 
 
 def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
