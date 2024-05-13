@@ -26,6 +26,9 @@ import panel as pn
 hv.extension('bokeh')
 
 
+from skew_t_plot import skew_t_plot
+
+
 def calc_skew_t_offset(pressure, skew_angle):
     pressure_data = pressure.data.to(units.hPa).magnitude
     P_bottom = np.max(pressure_data)
@@ -190,8 +193,8 @@ def makeSoundingDataset(profileData, icao=None, when=None, selectedParcel="sb"):
     # storm motion
     if np.nanmax(soundingDS.AGL.data) > 6000 * units.meter:
         soundingDS.attrs["bunkers_RM"], soundingDS.attrs["bunkers_LM"], soundingDS.attrs["zeroToSixMean"] = mpcalc.bunkers_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, soundingDS.HGHT)
-        lowest1500_index = np.argmin(soundingDS.AGL <= units.Quantity(1500, 'meter'))
-        llj_index = np.argmax(soundingDS.WSPD[:lowest1500_index])
+        lowest1500_index = np.argmin(soundingDS.AGL.data <= units.Quantity(1500, 'meter'))
+        llj_index = np.argmax(soundingDS.WSPD.data[:lowest1500_index])
         llj_u, llj_v = soundingDS.u[llj_index], soundingDS.v[llj_index]
         soundingDS.attrs["corfidi_up"], soundingDS.attrs["corfidi_down"] = mpcalc.corfidi_storm_motion(soundingDS.LEVEL, soundingDS.u, soundingDS.v, u_llj=llj_u, v_llj=llj_v)
         # SRH
@@ -393,7 +396,7 @@ def readSharppy(fileName):
     return data, where, when
 
 
-def plotSounding(profileData, outputPath, icao, time, soundingType="Observed"):
+def plotSounding(profileData, icao, time, soundingType="Observed"):
     title_text = ''
     if not np.isnan(profileData.LAT) and not np.isnan(profileData.LON):
         try:
@@ -412,9 +415,8 @@ def plotSounding(profileData, outputPath, icao, time, soundingType="Observed"):
         groundLon = None
         title_text = f"{soundingType} Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao}"
     tax = pn.pane.Markdown(title_text, styles={'text-align': 'center'})
-    skew = plotSkewT(profileData)
-    # thermalWindAx.set_yscale("log")
-    # thermalWindAx.set_ylim(skew.ax.get_ylim())
+    skew = skew_t_plot(profileData)
+    
     # if groundLat is not None:
     #     thermalWindAx.text(0.5, 0.95, "Thermal Wind\nRel. Humidity", ha="center", va="center", fontsize=9, transform=thermalWindAx.transAxes)
     # else:
@@ -485,14 +487,15 @@ def plotSounding(profileData, outputPath, icao, time, soundingType="Observed"):
     # mapAx.set_adjustable("datalim")
     # mapAx.set_position([16*width_unit, 7*height_unit, 3*width_unit, 2*height_unit])
     # Path(path.dirname(outputPath)).mkdir(parents=True, exist_ok=True)
-    fig = pn.Column(tax, pn.Row(pn.Column(skew)))
-    fig.servable()
-
+    print(skew)
+    fig = pn.Column(tax, pn.Column(pn.Row(skew.skew_t)))
+    pn.serve(fig)
+    return fig
 
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 2:
         print("Usage: soundingPlot.py <input> <output>")
         exit()
     if not path.exists(sys.argv[1]):
@@ -502,5 +505,9 @@ if __name__ == "__main__":
         readACARS(sys.argv[1])
     else:
         profileData, icao, datetime  = readSharppy(sys.argv[1])
-        plotSounding(profileData, sys.argv[2], icao, datetime)
+    
+    output = plotSounding(profileData, icao, datetime)
+    if len(sys.argv) == 3:
+        output.save(sys.argv[2])
+
 
