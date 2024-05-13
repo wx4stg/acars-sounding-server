@@ -1,2 +1,2 @@
 # hdwx-sounding-server
-API for MetPy-based, customizable, skew-T log-P atmospheric thermodynamic profile plots
+MetPy/HoloViews-based skew-T log-P atmospheric thermodynamic profile plots
