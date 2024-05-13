@@ -406,12 +406,25 @@ def plotSounding(profileData, icao, time, soundingType="Observed"):
         except TypeError:
             groundLat = profileData.LAT
             groundLon = profileData.LON
-        title_text = f"{soundingType} Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao} ({groundLat.magnitude:.2f}, {groundLon.magnitude:.2f})"
+        if 'pint' in str(type(groundLat)):
+            groundLat = groundLat.to('degree').magnitude
+            groundLon = groundLon.to('degree').magnitude
+        if groundLat >= 0:
+            lat_dir = 'N'
+        else:
+            groundLat = -groundLat
+            lat_dir = 'S'
+        if groundLon >= 0:
+            lon_dir = 'E'
+        else:
+            groundLon = -groundLon
+            lon_dir = 'W'
+        title_text = f'<h2 style="line-height:0.1">{time.strftime("%H:%M UTC %d %b %Y")} at {icao} ({groundLat:.2f}°{lat_dir}, {groundLon:.2f}°{lon_dir})</h2><h4 style="line-height:0.1">{soundingType} Sounding</h4>'
     else:
         groundLat = None
         groundLon = None
-        title_text = f"{soundingType} Sounding -- {time.strftime('%H:%M UTC %d %b %Y')} -- {icao}"
-    tax = pn.pane.Markdown(title_text, styles={'text-align': 'center'})
+        title_text = f'<h2 style="line-height:0.1">{time.strftime('%H:%M UTC %d %b %Y')} at {icao}</h3><h4 style="line-height:0.1">{soundingType} Sounding</h4>'
+    tax = pn.pane.HTML(title_text)
     skew = skew_t_plot(profileData)
     
     # if groundLat is not None:
