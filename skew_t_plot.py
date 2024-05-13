@@ -56,13 +56,16 @@ class skew_t_plot:
     def hook_inflow_layer(self, plot, element):
         EIL_box = BoxAnnotation(left=plot_width/25, right=3*plot_width/50, bottom=self.profileData.inflowBottom.to(units.hPa).magnitude, top=self.profileData.inflowTop.to(units.hPa).magnitude, fill_alpha=0.2, fill_color='teal', line_color='teal', left_units='screen', right_units='screen')
         plot.state.add_layout(EIL_box)
+        if self.profileData.inflowBottom < self.profileData.LEVEL[0]:
+            plot.state.add_layout(Label(x=5*plot_width/50, y=self.profileData.inflowBottom.to(units.hPa).magnitude, text=f"EIL: {self.profileData.inflowBottom.to(units.hPa).magnitude:.1f} hPa", x_units='screen', text_baseline='middle', text_color='teal', text_font_size='10px'))
+        plot.state.add_layout(Label(x=5*plot_width/50, y=self.profileData.inflowTop.to(units.hPa).magnitude, text=f"EIL: {self.profileData.inflowTop.to(units.hPa).magnitude:.1f} hPa", x_units='screen', text_baseline='middle', text_color='teal', text_font_size='10px'))
         eilData = self.profileData.where((self.profileData.LEVEL <= self.profileData.inflowBottom) & (self.profileData.LEVEL >= self.profileData.inflowTop), drop=True)
         eilRH = int(eilData.RH.mean() * 100)
         new_hover = [('Effective Inflow Layer', ''), ('Pressure', f"{self.profileData.inflowBottom.to(units.hPa).magnitude:.1f} - {self.profileData.inflowTop.to(units.hPa).magnitude:.1f} hPa"), ('Height (AGL)', f"{self.profileData.inflowBottom_agl.to(units.meter).magnitude:.1f} - {self.profileData.inflowTop_agl.to(units.meter).magnitude:.1f} m"), ('Relative Humidity', f"{eilRH}%")]
         for hover in plot.state.select(HoverTool):
-            if hover.tooltips[2][0] == 'eil_override':
-                hover.tooltips = new_hover
-                break
+            if len(hover.tooltips) == 3 and hover.tooltips[2][0] == 'eil_override':
+                    hover.tooltips = new_hover
+                    break
         #     skew.ax.text(0.16, profileData.inflowTop.to(units.hPa).magnitude, f"Effective Inflow Layer\n{profileData.inflowBottom.to(units.hPa).magnitude:.1f} - {profileData.inflowTop.to(units.hPa).magnitude:.1f} hPa\nAGL: {int(profileData.inflowBottom_agl.to(units.meter).magnitude)} - {int(profileData.inflowTop_agl.to(units.meter).magnitude)} m\nRH: {eilRH}%", color="teal",  ha="left", va="top", path_effects=[withStroke(linewidth=3, foreground="white")], fontsize=8, clip_on=True, zorder=7, transform=skew.ax.get_yaxis_transform(), alpha=0.7)
 
 
@@ -99,6 +102,7 @@ class skew_t_plot:
         src = ColumnDataSource(data=dict(x1=x1, x2=x2, y=y))
         dgz_shade = HArea(x1='x1', x2='x2', y='y', fill_color='blue', fill_alpha=0.2)
         renderer = plot.state.add_glyph(src, dgz_shade)
+        # TODO: this won't work with multiple DGZs
         plot.state.add_tools(
             HoverTool(
                 renderers=[renderer],
@@ -107,15 +111,44 @@ class skew_t_plot:
                     ('Pressure', f"{dgzData.LEVEL[0].data.to(units.hPa).magnitude:.1f} - {dgzData.LEVEL[-1].data.to(units.hPa).magnitude:.1f} hPa"),
                     ('Height (AGL)', f"{dgzData.AGL[0].data.to(units.meter).magnitude:.1f} - {dgzData.AGL[-1].data.to(units.meter).magnitude:.1f} m"),
                     ('Relative Humidity', f"{int(dgzData.RH.data.mean().magnitude*100)}%")
-                ]
+                ],
+                toggleable=False
             )
         )
 
+    def hook_lcl_label(self, plot, element):
+        plot.state.add_layout(Label(x=5*plot_width/50, y=self.profileData.attrs[self.parcelType+'LCL'].to(units.hPa).magnitude, text=f"LCL: {self.profileData.attrs[self.parcelType+'LCL'].to(units.hPa).magnitude:.1f} hPa", x_units='screen', text_baseline='middle', text_color='mediumseagreen', text_font_size='10px'))
+        new_hover = [('Lifted Condensation Level', ''), ('Pressure', f"{self.profileData.attrs[self.parcelType+'LCL'].to(units.hPa).magnitude:.1f} hPa"), ('Height (AGL)', f"{self.profileData.attrs[self.parcelType+'LCL_agl'].to(units.meters).magnitude:.1f} m")]
+        for hover in plot.state.select(HoverTool):
+            if len(hover.tooltips) == 3 and hover.tooltips[2][0] == 'lcl_override':
+                    hover.tooltips = new_hover
+                    break
+
+    def hook_lfc_label(self, plot, element):
+        plot.state.add_layout(Label(x=5*plot_width/50, y=self.profileData.attrs[self.parcelType+'LFC'].to(units.hPa).magnitude, text=f"LFC: {self.profileData.attrs[self.parcelType+'LFC'].to(units.hPa).magnitude:.1f} hPa", x_units='screen', text_baseline='middle', text_color='darkgoldenrod', text_font_size='10px'))
+        new_hover = [('Level of Free Convection', ''), ('Pressure', f"{self.profileData.attrs[self.parcelType+'LFC'].to(units.hPa).magnitude:.1f} hPa"), ('Height (AGL)', f"{self.profileData.attrs[self.parcelType+'LFC_agl'].to(units.meters).magnitude:.1f} m")]
+        for hover in plot.state.select(HoverTool):
+            if len(hover.tooltips) == 3 and hover.tooltips[2][0] == 'lfc_override':
+                    hover.tooltips = new_hover
+                    break
+
+    def hook_el_label(self, plot, element):
+        plot.state.add_layout(Label(x=5*plot_width/50, y=self.profileData.attrs[self.parcelType+'EL'].to(units.hPa).magnitude, text=f"EL: {self.profileData.attrs[self.parcelType+'EL'].to(units.hPa).magnitude:.1f} hPa", x_units='screen', text_baseline='middle', text_color='mediumpurple', text_font_size='10px'))
+        new_hover = [('Equilibrium Level', ''), ('Pressure', f"{self.profileData.attrs[self.parcelType+'EL'].to(units.hPa).magnitude:.1f} hPa"), ('Height (AGL)', f"{self.profileData.attrs[self.parcelType+'EL_agl'].to(units.meters).magnitude:.1f} m")]
+        for hover in plot.state.select(HoverTool):
+            if len(hover.tooltips) == 3 and hover.tooltips[2][0] == 'el_override':
+                    hover.tooltips = new_hover
+                    break
+
     def hook_remove_bokeh(self, plot, element):
         plot.state.toolbar.logo = None
+        for tool in plot.state.toolbar.tools:
+            if isinstance(tool, HoverTool):
+                tool.toggleable = False
 
 
     def plotSkewT(self, parcelType="sb"):
+        self.parcelType = parcelType
         sounding_opts = {
             'ylim': (1000, 100),
             'xlabel' : 'Temperature (°C)',
@@ -193,15 +226,21 @@ class skew_t_plot:
 
         skewt = temp_curve * dew_curve * virt_curve * wetbulb_curve * sb_parcel_curve * isotherms * dry_adiabats * moist_adiabats * dgz_isotherms * sfc_wetbulb_label * sfc_dew_label * sfc_temp_label * theta_curve * theta_e_curve * dcape_curve
         
+        if hasattr(self.profileData, parcelType+'LCL') and not np.isnan(self.profileData.attrs[parcelType+'LCL']):
+            LCL_line = hv.Curve((np.linspace(isotherm_min, isotherm_max, 10, endpoint=True), np.full((10), self.profileData.attrs[parcelType+'LCL'].to(units.hPa).magnitude), np.zeros((10))),
+                kdims=['Skewed_T'], vdims=['Pressure', 'lcl_override']).opts(color='mediumseagreen', alpha=0.2, tools=['hover'], hooks=[self.hook_lcl_label])
+            skewt = LCL_line * skewt
+        
+        if hasattr(self.profileData, parcelType+'LFC') and not np.isnan(self.profileData.attrs[parcelType+'LFC']):
+            LFC_line = hv.Curve((np.linspace(isotherm_min, isotherm_max, 10, endpoint=True), np.full((10), self.profileData.attrs[parcelType+'LFC'].to(units.hPa).magnitude), np.zeros((10))),
+                kdims=['Skewed_T'], vdims=['Pressure', 'lfc_override']).opts(color='darkgoldenrod', alpha=0.2, tools=['hover'], hooks=[self.hook_lfc_label])
+            skewt = LFC_line * skewt
 
-        # TODO: LFC, LCL, EL labels
-        # skew.ax.plot([0, .95], [profileData.attrs[parcelType+"LCL"].magnitude, profileData.attrs[parcelType+"LCL"].magnitude], color="mediumseagreen", linewidth=1, transform=skew.ax.get_yaxis_transform())
-        # skew.ax.text(0.875, profileData.attrs[parcelType+"LCL"].magnitude, f"LCL: {profileData.attrs[parcelType+'LCL'].magnitude:.1f} hPa", color="mediumseagreen",  ha="left", va="top", path_effects=[withStroke(linewidth=3, foreground="white")], transform=skew.ax.get_yaxis_transform())
-        # skew.ax.plot([0, .95], [profileData.attrs[parcelType+"LFC"].magnitude, profileData.attrs[parcelType+"LFC"].magnitude], color="darkgoldenrod", linewidth=1, transform=skew.ax.get_yaxis_transform())
-        # skew.ax.text(0.875, profileData.attrs[parcelType+"LFC"].magnitude, f"LFC: {profileData.attrs[parcelType+'LFC'].magnitude:.1f} hPa", color="darkgoldenrod",  ha="left", va="top", path_effects=[withStroke(linewidth=3, foreground="white")], transform=skew.ax.get_yaxis_transform())
-        # skew.ax.plot([0, .95], [profileData.attrs[parcelType+"EL"].magnitude, profileData.attrs[parcelType+"EL"].magnitude], color="mediumpurple", linewidth=1, transform=skew.ax.get_yaxis_transform())
-        # skew.ax.text(0.875, profileData.attrs[parcelType+"EL"].magnitude, f"EL: {profileData.attrs[parcelType+'EL'].magnitude:.1f} hPa", color="mediumpurple",  ha="left", va="top", path_effects=[withStroke(linewidth=3, foreground="white")], transform=skew.ax.get_yaxis_transform())
-    
+        if hasattr(self.profileData, parcelType+'EL') and not np.isnan(self.profileData.attrs[parcelType+'EL']):
+            EL_line = hv.Curve((np.linspace(isotherm_min, isotherm_max, 10, endpoint=True), np.full((10), self.profileData.attrs[parcelType+'EL'].to(units.hPa).magnitude), np.zeros((10))),
+                kdims=['Skewed_T'], vdims=['Pressure', 'el_override']).opts(color='mediumpurple', alpha=0.2, tools=['hover'], hooks=[self.hook_el_label])
+            skewt = EL_line * skewt
+        
         dgzsData = (self.profileData.TEMP.data <= -12*units.degC) & (self.profileData.TEMP.data >= -17*units.degC)
         dgzsData = dgzsData.nonzero()[0]
         if len(dgzsData) > 0:
@@ -225,9 +264,11 @@ class skew_t_plot:
             skewt = skewt * reduce(lambda x, y: x*y, dgz_bounds)
 
         if not np.isnan(self.profileData.inflowBottom):
-            EIL_bottom_line = hv.Curve((np.linspace(isotherm_min, isotherm_max, 10, endpoint=True), np.full((10), self.profileData.inflowBottom.to(units.hPa).magnitude), np.zeros((10))),
+            if self.profileData.inflowBottom < self.profileData.LEVEL[0]:
+                EIL_bottom_line = hv.Curve((np.linspace(isotherm_min, isotherm_max, 10, endpoint=True), np.full((10), self.profileData.inflowBottom.to(units.hPa).magnitude), np.zeros((10))),
+                    kdims=['Skewed_T'], vdims=['Pressure', 'eil_override']).opts(color='teal', alpha=0.2, tools=['hover'], hooks=[self.hook_inflow_layer])
+                skewt = EIL_bottom_line * skewt
+            EIL_top_line = hv.Curve((np.linspace(isotherm_min, isotherm_max, 10, endpoint=True), np.full((10), self.profileData.inflowTop.to(units.hPa).magnitude), np.zeros((10))),
                 kdims=['Skewed_T'], vdims=['Pressure', 'eil_override']).opts(color='teal', alpha=0.2, tools=['hover'], hooks=[self.hook_inflow_layer])
-            EIL_top_line = hv.Curve((np.linspace(isotherm_min, isotherm_max, 3, endpoint=True), np.full((3), self.profileData.inflowTop.to(units.hPa).magnitude), np.zeros((10))),
-                kdims=['Skewed_T'], vdims=['Pressure', 'eil_override']).opts(color='teal', alpha=0.2, tools=['hover'], hooks=[self.hook_inflow_layer])
-            skewt = EIL_bottom_line * EIL_top_line * skewt
+            skewt = EIL_top_line * skewt
         return skewt
